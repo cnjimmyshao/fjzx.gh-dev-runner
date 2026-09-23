@@ -61,13 +61,20 @@ export function commandRef(comment) {
   };
 }
 /**
- * 交给 Dev 的启动消息：只说明目标仓库、Issue 与触发评论，并要求 Dev 自己读取目标项目
+ * 交给 Dev 的启动消息：只说明目标仓库、Issue、命令词与触发评论，并要求 Dev 自己读取目标项目
  * 的规则与最新决定。任务要求不在这里复述。
+ *
+ * @param {object} input
+ * @param {string} input.command 命令词本身（例如 `@dev`），用于告诉 Dev 是哪条指令唤醒了它
+ * @param {{id: number|null, author: string, url: string|null}} input.trigger 触发评论的引用
  */
-export function buildTaskPrompt({ repo, issueNumber, issueUrl, command, runnerId }) {
+export function buildTaskPrompt({ repo, issueNumber, issueUrl, command, trigger, runnerId }) {
+  const where = trigger?.url === null || trigger?.url === undefined
+    ? `评论 id ${trigger?.id ?? '(unknown)'}`
+    : `评论 ${trigger.url}`;
   return [
     `你是通过 GitHub 评论接单启动的 Dev。目标：仓库 ${repo} 的 Issue #${issueNumber}（${issueUrl}）。`,
-    `触发命令：${command}，评论 ${command.url}，请求人 @${command.author}，执行机 ${runnerId}。`,
+    `触发命令：${command}，${where}，请求人 @${trigger?.author ?? '(unknown)'}，执行机 ${runnerId}。`,
     '',
     '开始前实际读取目标项目的 AGENTS.md、文档导航、docs/current/、相关 Issue 全文与最新评论、',
     '关联 PR 的 Review 与修复记录；不要假设另一个会话已经传入上下文，也不要依据本消息复述需求。',

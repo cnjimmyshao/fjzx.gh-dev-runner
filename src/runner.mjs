@@ -211,7 +211,8 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
       repo,
       issueNumber: issue.number,
       issueUrl: issue.url,
-      command,
+      command: config.github.command,
+      trigger: command,
       runnerId: config.runnerId,
     });
     await feedback({

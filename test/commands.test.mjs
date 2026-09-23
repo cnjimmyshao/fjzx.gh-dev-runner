@@ -64,7 +64,8 @@ test('启动消息只指向仓库、Issue 与触发评论，不复述需求', ()
     repo: 'owner/project',
     issueNumber: 9,
     issueUrl: 'https://github.com/owner/project/issues/9',
-    command: { id: 5, author: 'maintainer', url: 'https://github.com/owner/project/issues/9#issuecomment-5' },
+    command: '@dev',
+    trigger: { id: 5, author: 'maintainer', url: 'https://github.com/owner/project/issues/9#issuecomment-5' },
     runnerId: 'mb01',
   });
   assert.ok(task.includes('owner/project'));
@@ -72,15 +73,31 @@ test('启动消息只指向仓库、Issue 与触发评论，不复述需求', ()
   assert.ok(task.includes('issuecomment-5'));
   assert.ok(task.includes('mb01'));
   assert.ok(task.includes('AGENTS.md'));
-  assert.ok(!task.includes('@@'), '不把评论正文拼进命令');
+  assert.ok(task.includes('触发命令：@dev'), '命令词本身要出现在消息里');
+  assert.ok(!task.includes('[object Object]'), '不能把评论引用对象直接插进文本');
 });
 
-test('任务消息把评论正文当数据而非命令拼接', () => {
+test('触发评论没有链接时退回评论 id，不出现 undefined', () => {
   const task = buildTaskPrompt({
     repo: 'owner/project',
     issueNumber: 1,
     issueUrl: 'https://github.com/owner/project/issues/1',
-    command: { id: 1, author: 'someone; rm -rf /', url: null },
+    command: '@dev',
+    trigger: { id: 7, author: 'maintainer', url: null },
+    runnerId: 'mb01',
+  });
+  assert.ok(task.includes('评论 id 7'));
+  assert.ok(!task.includes('undefined'));
+  assert.ok(!task.includes('null'));
+});
+
+test('任务消息把评论作者当数据而非命令拼接', () => {
+  const task = buildTaskPrompt({
+    repo: 'owner/project',
+    issueNumber: 1,
+    issueUrl: 'https://github.com/owner/project/issues/1',
+    command: '@dev',
+    trigger: { id: 1, author: 'someone; rm -rf /', url: null },
     runnerId: 'mb01',
   });
   assert.ok(task.includes('rm -rf'), '作者名只作为文本出现');
