@@ -313,6 +313,40 @@ test('绑定的工作目录丢失时报告，不静默新建会话', async (t) =
   assert.match(gh.created[0].body, /工作目录已不存在/);
 });
 
+test('旧版本状态：被当成基线吞掉的命令在恢复后重新受理一次', async (t) => {
+  const root = makeTempDir();
+  t.after(() => cleanup(root));
+  const { config } = baseConfig({ root });
+  const taskDir = join(root, 'task-root');
+  mkdirSync(config.runtime.stateDir, { recursive: true });
+  // 旧版本语义：空 Issue 的基线是 0，首条命令被当成基线登记后就成了 seenSeq=0 + claimed 的卡住状态。
+  writeFileSync(join(config.runtime.stateDir, 'state.json'), `${JSON.stringify({
+    version: 1,
+    repositories: {
+      'owner/project': {
+        1: {
+          seenSeq: 0,
+          binding: { runnerId: 'mb01', dir: taskDir, sessionId: null },
+          commands: [{ id: 100, author: 'maintainer', status: 'claimed', at: 't0' }],
+        },
+      },
+    },
+  }, null, 2)}\n`, 'utf8');
+
+  const gh = withComments(makeGh({ issues: [issue(1, LABEL)] }), {
+    'owner/project#1': [comment(100, '@dev')],
+  });
+  const { exec, runs } = makeHarnessExec();
+  const logs = [];
+  const runner = createRunner({ config, gh, exec, log: (m) => logs.push(m) });
+  await runner.recover();
+  await runner.cycle();
+  assert.equal(runs.length, 1, '被吞掉的命令重新受理一次');
+  assert.ok(logs.some((line) => line.includes('状态来自旧版本')), '记录迁移动作');
+  const state = loadState(join(config.runtime.stateDir, 'state.json')).repositories['owner/project']['1'];
+  assert.equal(state.commands[0].status, 'completed', '重试后进入正常终态');
+});
+
 test('重启恢复：已认领未结束的命令报结果不确定并保持绑定', async (t) => {
   const root = makeTempDir();
   t.after(() => cleanup(root));

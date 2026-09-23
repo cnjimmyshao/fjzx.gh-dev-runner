@@ -292,6 +292,10 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
 
   async function handleComments({ repository, issue, comments }) {
     const entry = entryFor(repository.repo, issue.number);
+    const migrated = migrateLegacyProgress(entry);
+    if (migrated > 0) {
+      log(`状态来自旧版本：${repository.repo}#${issue.number} 有 ${migrated} 条命令曾被当成基线吞掉，已回退进度以便重新受理`);
+    }
     const sinceSeq = baseline(entry, comments);
     const { newestSeq, selected, ignored, edited } = collectCommands({
       comments,
@@ -418,6 +422,27 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
   }
 
   /**
+   * 旧版本状态里「被当成基线吞掉」的命令。
+   *
+   * 旧版本用 `0` 兼作「该 Issue 还没被扫描过」，于是「尚无评论的 Issue」其首条命令会被当成基线
+   * 吞掉，留下 `seenSeq: 0` + 一条 `claimed` 记录、且**从未创建过会话**的卡住状态。新版本用
+   * `null` 表示未扫描、`0` 是合法值，因此读到 `seenSeq: 0` 的 claimed 记录即可判定为旧语义的
+   * 受害者：进度退回该命令之前并标记可重试，让它在受理时被重新认领一次（不新建第二个写入者）。
+   */
+  function migrateLegacyProgress(entry) {
+    if (entry.seenSeq !== 0) return 0;
+    const claimed = (entry.commands ?? []).filter((item) => item.status === 'claimed');
+    if (claimed.length === 0) return 0;
+    entry.seenSeq = Math.max(0, claimed[0].id - 1);
+    for (const command of claimed) {
+      command.retryable = true;
+      command.legacyStuck = true;
+    }
+    save();
+    return claimed.length;
+  }
+
+  /**
    * 正常重启：把上一轮「已认领未结束」的命令如实报为结果不确定。
    *
    * 有绑定说明上次调用真的开始过（或至少已准备好目录）：不重跑，等新指令按原目录续接。
@@ -432,9 +457,16 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
         .filter((repository) => repository.machineId === config.runnerId)
         .map((repository) => [repository.repo, repository]),
     );
+    let migrated = 0;
     for (const [repo, bucket] of Object.entries(state.repositories)) {
       if (!routable.has(repo)) continue;
       for (const [number, entry] of Object.entries(bucket)) {
+        // 旧版本状态先迁移，下面的 retryable 判定才能看到 legacyStuck 标记。
+        const migratedHere = migrateLegacyProgress(entry);
+        if (migratedHere > 0) {
+          migrated += migratedHere;
+          log(`状态来自旧版本：${repo}#${number} 有 ${migratedHere} 条命令曾被当成基线吞掉，已回退进度以便重新受理`);
+        }
         const claimed = (entry.commands ?? []).filter((item) => item.status === 'claimed');
         if (claimed.length === 0) continue;
         const binding = entry.binding ?? null;
@@ -442,13 +474,15 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
         for (const command of claimed) {
           command.status = 'uncertain';
           command.finishedAt = new Date().toISOString();
-          command.retryable = retryable;
+          // 旧版本里被当成基线吞掉的命令标了 legacyStuck：即使有绑定也允许重试（那次调用从未开始）。
+          command.retryable = command.legacyStuck === true ? true : retryable;
         }
         entry.inFlight = false; // 残留标记必须清掉，否则下一条命令会被当成忙碌。
-        if (retryable) {
-          // 进度回退到该评论之前，让它在下一轮检查里作为「新命令」被重新受理一次；
-          // 受理时只多认领这一条，其它已处理评论仍由状态里的记录挡住。
-          entry.seenSeq = Math.max(0, claimed[0].id - 1);
+        // 有待重试的命令时把进度退到它之前，让它在下一轮作为「新命令」被重新受理一次；
+        // 受理时只多认领这一条，其它已处理评论仍由状态里的记录挡住。
+        const firstRetryable = claimed.find((command) => command.retryable === true);
+        if (firstRetryable !== undefined) {
+          entry.seenSeq = Math.max(0, firstRetryable.id - 1);
         }
         save();
         for (const command of claimed) {
@@ -458,7 +492,7 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
             body: formatComment({
               kind: 'uncertain',
               binding,
-              detail: retryable
+              detail: command.retryable === true
                 ? `评论 ${command.id} 已登记但上次停在准备工作目录阶段、没有真正开始调用；本条会在下一轮检查时重试一次。`
                 : `上一次调用（评论 ${command.id}）没有留下可判读的结束记录，程序在恢复时发现中断。绑定与工作目录保留，请核对后另发一条新指令。`,
             }),
@@ -466,6 +500,7 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
         }
       }
     }
+    return migrated;
   }
 
   /**
