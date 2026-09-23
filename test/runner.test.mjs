@@ -314,9 +314,7 @@ test('不同仓库的同号 Issue 各自绑定，不混淆', async (t) => {
     },
   });
   const gh = makeGh({ issues: [issue(1, LABEL)] });
-  gh.listComments = async ({ repo }) => (repo === 'owner/one'
-    ? [comment(100, 'x')]
-    : [comment(100, 'x')]);
+  gh.listComments = async () => [comment(100, 'x')];
   const { exec, runs } = makeHarnessExec();
   const runner = createRunner({ config, gh, exec, log: () => {} });
   await runner.cycle();
