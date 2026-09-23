@@ -2,7 +2,7 @@
 
 轻量、可部署在不同执行电脑上的 GitHub Issue 接单与 DeepSeek Harness 会话续接工具。
 
-**当前阶段：已确定 headless CLI 方向，尚无可运行的接单程序，CLI 本机验证待完成。** 示例命令不是已上线功能；本工具尚未部署或接管真实开发任务。
+**当前阶段：已确定 headless CLI 方向，尚无可运行的接单程序；本机 CLI 首轮执行已实测，但所装版本无会话续接选项，首版调用界面与版本前提待维护者决定。** 示例命令不是已上线功能；本工具尚未部署或接管真实开发任务。
 
 ## 目标
 
@@ -18,6 +18,7 @@ DeepSeek 模型 API Key 在本机配置并保存，由 Harness 用于模型调�
 - [文档导航](docs/README.md)：Current、ADR、Research 与 Archive 的分工。
 - [当前需求](docs/current/README.md)：已确认目标、边界与尚未落实的部分。
 - [开发环境与验证](docs/development.md)：先做一次性 CLI 接入验证，再实现最小闭环。
+- [CLI 本机验证报告](docs/research/2026-09-23-local-harness-cli-first-run-and-resume.md)：实际版本、实测结果与待维护者决定的调用路径。
 
 开发入口是关联 Issue。Issue 保存问题与决定，PR 交付变更；读取仓库规则后按任务执行，不依赖聊天里另发一份长提示词。当前没有 package.json、安装脚本或本工具的运行命令；外部 Review 集成是否已启用需另行核验，不能据此声称环境已就绪。
 
