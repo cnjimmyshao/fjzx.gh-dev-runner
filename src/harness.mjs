@@ -52,7 +52,8 @@ export function readResult({ resultPath, exitCode, stdout, stderr }) {
  * @param {string} options.resultPath 结果 JSON 落盘路径
  * @param {string} options.stdoutPath CLI 本机日志
  * @param {string} options.stderrPath CLI 本机错误日志
- * @param {string} [options.capture]
+ * @param {string} [options.capture] 传给 exec 的输出捕获方式（file 时用上面的两个日志路径）
+ * @param {Record<string, string|undefined>} [options.env] 追加/覆盖的子进程环境变量
  */
 export async function runHarness({
   harness, exec, cwd, task, sessionId, resultPath, stdoutPath, stderrPath, capture = 'file', env: extraEnv = {},
