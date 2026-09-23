@@ -5,7 +5,7 @@
 // 项目规则完成。
 
 import { mkdirSync, readdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import { buildTaskPrompt, collectCommands, commandRef } from './commands.mjs';
 import { HarnessError, runHarness } from './harness.mjs';
@@ -14,12 +14,17 @@ import {
 } from './state.mjs';
 import { prepareWorkspace } from './workspace.mjs';
 
-/** 接单结果 → 回写 Issue 的评论正文。一条命令只回一条，不每分钟刷评论。 */
+/**
+ * 接单结果 → 回写 Issue 的评论正文。一条命令只回一条，不每分钟刷评论。
+ *
+ * 公开评论只带非敏感的核对信息（执行机、会话标识、任务目录名）；本机绝对路径、模型输出、
+ * 完整日志与凭据一律留在本机，按 Current「不公开本机敏感路径」的要求处理。
+ */
 export function formatComment({ kind, binding, detail }) {
   const who = `接单执行机 \`${binding?.runnerId ?? '(unknown)'}\``;
   const where = binding === null || binding === undefined
     ? ''
-    : `\n\n- 工作目录：\`${binding.dir}\`\n- 会话：\`${binding.sessionId ?? '(none)'}\``;
+    : `\n\n- 任务目录：\`${basename(binding.dir ?? '') || '(unknown)'}\`\n- 会话：\`${binding.sessionId ?? '(none)'}\``;
   const note = detail === undefined || detail === null || detail === '' ? '' : `\n\n原因：${detail}`;
   switch (kind) {
     case 'created':
@@ -32,6 +37,8 @@ export function formatComment({ kind, binding, detail }) {
       return `上一次调用结果不确定。\n\n${who}${where}${note}\n\n不静默新建会话，也不盲目重跑；请核对后另发一条新指令。`;
     case 'failed':
       return `接单后调用失败，本条没有可判读的完成结果。\n\n${who}${where}${note}\n\n工作目录与绑定保留。`;
+    case 'turn-failed':
+      return `本次调用已结束，但回合没有正常完成，因此没有可判读的交付结果。\n\n${who}${where}${note}\n\n判定与后续由维护者／Dev 按目标项目规则处理；工作目录与绑定保留。`;
     case 'scope':
       return `本条未启动。${note}`;
     default:
@@ -56,21 +63,6 @@ export function pruneRunLogs(dir, keep) {
   for (const stale of sorted.slice(keep)) rmSync(join(dir, stale.name), { recursive: true, force: true });
 }
 
-/**
- * 会话标识是否在本机持久化目录里存在。只用于「上次调用在取得标识前中断」时判断能否按
- * 原绑定续接；真正的目录校验由 headless runner 自己完成。
- */
-export function sessionRecordedLocally(dshHome, sessionId) {
-  const root = join(dshHome, 'sessions');
-  if (!existsSync(root)) return false;
-  for (const bucket of readdirSync(root, { withFileTypes: true })) {
-    if (!bucket.isDirectory()) continue;
-    const record = join(root, bucket.name, sessionId, 'session.v3.jsonl.zstd');
-    if (existsSync(record)) return true;
-  }
-  return false;
-}
-
 export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
   const runtime = config.runtime;
   const stateFile = statePath(runtime.stateDir);
@@ -89,10 +81,15 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
     return join(runtime.stateDir, 'logs', `${repo.replace('/', '-')}-issue-${issueNumber}`);
   }
 
-  function tempPath(name) {
-    const dir = join(runtime.stateDir, 'tmp');
-    mkdirSync(dir, { recursive: true });
-    return join(dir, name);
+  /**
+   * 子进程输出落盘位置。`capture: 'pipe'` 时不需要，返回 undefined 让 exec 走管道。
+   */
+  function execFiles(runDir, label) {
+    if (runtime.capture !== 'file') return undefined;
+    return {
+      stdoutFile: join(runDir, `${label}.stdout.log`),
+      stderrFile: join(runDir, `${label}.stderr.log`),
+    };
   }
 
   function newRunDir(repo, issueNumber, commandId) {
@@ -127,7 +124,7 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
    * 启动前的绑定核对与工作目录准备。绑定存在时沿用原目录（包括上次调用在取得会话标识
    * 前中断的情况），不重新准备，避免覆盖任务未提交的工作。
    */
-  async function planTask({ repository, issueNumber, entry }) {
+  async function planTask({ repository, issueNumber, entry, runDir }) {
     const problems = bindingProblems(entry.binding, repository, config.runnerId);
     if (entry.binding !== null && problems.length > 0) return { ok: false, reason: problems.join('；') };
     return prepareWorkspace({
@@ -135,14 +132,17 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
       issueNumber,
       exec,
       existing: entry.binding,
-      tempPath,
+      capture: runtime.capture,
+      files: execFiles(runDir, 'git'),
     });
   }
 
   async function execute({ repository, issue, command }) {
     const repo = repository.repo;
     const entry = entryFor(repo, issue.number);
-    const plan = await planTask({ repository, issueNumber: issue.number, entry });
+    // 每轮调用的输出落在同一个 runDir：git、Harness 与本机错误原因都可回查。
+    const runDir = newRunDir(repo, issue.number, command.id);
+    const plan = await planTask({ repository, issueNumber: issue.number, entry, runDir });
     if (!plan.ok) {
       log(`未启动 ${repo}#${issue.number}：${plan.reason}`);
       await feedback({ repo, issueNumber: issue.number, body: formatComment({ kind: 'scope', detail: plan.reason }) });
@@ -179,7 +179,6 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
       body: formatComment({ kind: sessionId === null ? 'created' : 'resumed', binding, detail }),
     });
 
-    const runDir = newRunDir(repo, issue.number, command.id);
     let outcome;
     try {
       outcome = await runHarness({
@@ -190,8 +189,8 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
         task: prompt,
         sessionId,
         resultPath: join(runDir, 'result.json'),
-        stdoutPath: join(runDir, 'stdout.log'),
-        stderrPath: join(runDir, 'stderr.log'),
+        stdoutPath: join(runDir, 'harness.stdout.log'),
+        stderrPath: join(runDir, 'harness.stderr.log'),
         capture: runtime.capture,
       });
     } catch (error) {
@@ -217,6 +216,18 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
     save();
     pruneRunLogs(taskLogDir(repo, issue.number), runtime.keepRunLogs);
     log(`${repo}#${issue.number} 回合结束 exit=${outcome.exitCode} status=${outcome.statusKind ?? '(none)'} session=${binding.sessionId ?? '(none)'}`);
+    if (!completed) {
+      // CLI 执行失败／被中止也是调用结果的一部分：在 Issue 上留一条可读原因，避免停在「已接单」。
+      await feedback({
+        repo,
+        issueNumber: issue.number,
+        body: formatComment({
+          kind: 'turn-failed',
+          binding,
+          detail: `退出码 ${outcome.exitCode}，回合状态 ${outcome.statusKind ?? '(unknown)'}${outcome.detail === '' ? '' : `；${outcome.detail}`}`,
+        }),
+      });
+    }
     // 回合结束不等于业务完成：业务结论与待决事项由 Dev 按目标项目规则报告。
     return {
       kind: completed ? 'completed' : 'turn-failed',
@@ -229,15 +240,46 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
   async function handleComments({ repository, issue, comments }) {
     const entry = entryFor(repository.repo, issue.number);
     const sinceSeq = baseline(entry, comments);
-    const { newestSeq, selected, ignored } = collectCommands({
+    const { newestSeq, selected, ignored, edited } = collectCommands({
       comments,
       sinceSeq,
       isAuthorized: (login) => repository.allowedActors.includes(login),
       command: config.github.command,
     });
-    // 进度先落盘：无论后面是否启动，这批评论都不会被下一轮重新当成新命令。
+
+    // 认领与推进进度放在同一次落盘，中间不 await：进程在这个窗口被杀也不会出现
+    // 「进度已过但没有认领记录」的静默丢命令。一条任务只接一条新命令，其余本轮回复未启动。
+    const busy = [];
+    let claimed = null;
+    for (const comment of selected) {
+      const existing = findCommand(entry, comment.id);
+      if (existing !== null) {
+        log(`跳过已处理命令 ${repository.repo}#${issue.number} comment=${comment.id} status=${existing.status}`);
+        continue;
+      }
+      if (claimed !== null) {
+        recordCommand(entry, { ...commandRef(comment), at: new Date().toISOString(), status: 'busy' });
+        busy.push(comment);
+        continue;
+      }
+      recordCommand(entry, { ...commandRef(comment), at: new Date().toISOString(), status: 'claimed' });
+      entry.inFlight = true;
+      claimed = comment;
+    }
     entry.seenSeq = newestSeq;
     save();
+
+    for (const comment of edited) {
+      log(`忽略被编辑过的评论 ${repository.repo}#${issue.number} comment=${comment.id}`);
+      await feedback({
+        repo: repository.repo,
+        issueNumber: issue.number,
+        body: formatComment({
+          kind: 'scope',
+          detail: `评论 ${comment.url ?? comment.id} 已被编辑；首版只接受新发布的独立命令评论，本条未启动。`,
+        }),
+      });
+    }
 
     for (const comment of ignored) {
       log(`忽略未授权命令 ${repository.repo}#${issue.number} comment=${comment.id} author=${comment.author}`);
@@ -251,34 +293,23 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
       });
     }
 
-    for (const comment of selected) {
-      const ref = commandRef(comment);
-      const existing = findCommand(entry, comment.id);
-      if (existing !== null) {
-        log(`跳过已处理命令 ${repository.repo}#${issue.number} comment=${comment.id} status=${existing.status}`);
-        continue;
-      }
-      // 一条任务只能有一个写入者：本轮已有调用在跑（或刚跑完）时，其余新命令明确回复未启动。
-      if (entry.inFlight === true || entry.ranThisCycle === true) {
-        recordCommand(entry, { ...ref, at: new Date().toISOString(), status: 'busy' });
-        save();
-        await feedback({ repo: repository.repo, issueNumber: issue.number, body: formatComment({ kind: 'busy' }) });
-        continue;
-      }
-      recordCommand(entry, { ...ref, at: new Date().toISOString(), status: 'claimed' });
-      entry.inFlight = true;
-      save();
+    if (claimed !== null) {
+      // 先执行被认领的命令：它对应「已接单」这条反馈，先于其余命令的「未启动」回复出现在 Issue 上。
+      const ref = commandRef(claimed);
       const result = await execute({ repository, issue, command: ref });
       entry.inFlight = false;
-      entry.ranThisCycle = true;
-      const record = findCommand(entry, comment.id);
+      const record = findCommand(entry, claimed.id);
       if (record !== null) {
         record.status = result.kind;
         record.finishedAt = new Date().toISOString();
       }
       save();
     }
-    entry.ranThisCycle = false;
+
+    for (const comment of busy) {
+      await feedback({ repo: repository.repo, issueNumber: issue.number, body: formatComment({ kind: 'busy' }) });
+    }
+
     return entry;
   }
 
@@ -291,9 +322,15 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
       return;
     }
     for (const issue of issues) {
-      if (!issue.labels.includes(repository.label)) {
-        // 服务端已按标签过滤；本地再核对一次，多标签或标签被改动的任务不启动。
-        log(`跳过 ${repository.repo}#${issue.number}：标签 [${issue.labels.join(',')}] 不含 ${repository.label}`);
+      if (issue.fromPullRequest === true) {
+        // issues 接口也返回 PR；PR 不是接单入口。
+        log(`跳过 ${repository.repo}#${issue.number}：这是 Pull Request，不是 Issue`);
+        continue;
+      }
+      // 只接「恰好一个」执行机标签的任务：多标签意味着多台电脑都可能接，会出现第二个写入者。
+      const routeLabels = issue.labels.filter((label) => label.startsWith('runner:'));
+      if (routeLabels.length !== 1 || routeLabels[0] !== repository.label) {
+        log(`跳过 ${repository.repo}#${issue.number}：执行机标签 [${routeLabels.join(',')}] 不是唯一的 ${repository.label}`);
         continue;
       }
       let comments;

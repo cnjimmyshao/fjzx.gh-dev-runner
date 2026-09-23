@@ -37,8 +37,7 @@ export function baseConfig({ root, repoDir, sourceDir, runnerId = 'mb01', overri
       workspaceDir: join(root, 'workspaces'),
       pollSeconds: 1,
       keepRunLogs: 3,
-    },
-    repositories: [
+    },    repositories: [
       {
         repo: 'owner/project',
         allowedActors: ['maintainer'],
@@ -80,6 +79,10 @@ export function makeGh({ issues = [], comments = {}, failIssues = null, failComm
 /**
  * Harness 调用替身：按 DSH_TASK / DSH_SESSION_ID 决定新建或续接，并把结果 JSON 写进
  * DSH_RESULT_FILE，与 scripts/headless-session 的输出契约一致。
+ *
+ * 替身只负责这些契约；它**不**代替真实 exec 把 stdout/stderr 写到 options.stdoutFile ——
+ * 那正是被测代码要保证的事，之前替身替它写了，才让 file 捕获的缺陷一直没被发现。
+ * 真实 file 捕获由 test/exec.test.mjs 走真实子进程覆盖。
  */
 export function makeHarnessExec({ newSessionId = () => `session-fake-${++counter}`, exitCode = 0, status = { kind: 'completed' }, spawnThrows = null } = {}) {
   const runs = [];
@@ -94,10 +97,15 @@ export function makeHarnessExec({ newSessionId = () => `session-fake-${++counter
       cwd: options.cwd,
       task: env.DSH_TASK ?? null,
       requestedSession: env.DSH_SESSION_ID ?? null,
-      stdoutFile: options.stdoutFile,
-      resultFile: env.DSH_RESULT_FILE ?? null,
       capture: options.capture,
+      stdoutFile: options.stdoutFile,
+      stderrFile: options.stderrFile,
+      resultFile: env.DSH_RESULT_FILE ?? null,
     };
+    // 缺省 capture=file 时必须给出落盘位置，否则真实 exec 会拒绝执行。
+    if (options.capture === 'file' && (options.stdoutFile === undefined || options.stderrFile === undefined)) {
+      throw new Error('capture=file 需要同时给出 stdoutFile 与 stderrFile');
+    }
     const sessionId = run.requestedSession ?? newSessionId();
     run.sessionId = sessionId;
     runs.push(run);
@@ -123,12 +131,21 @@ export function issue(number, label, extra = {}) {
     url: `https://github.com/owner/project/issues/${number}`,
     labels: [label],
     assignees: [],
+    fromPullRequest: false,
     ...extra,
   };
 }
 
-export function comment(id, body, author = 'maintainer') {
-  return { id, body, author, url: `https://github.com/owner/project/issues/1#issuecomment-${id}` };
+export function comment(id, body, author = 'maintainer', extra = {}) {
+  return {
+    id,
+    body,
+    author,
+    url: `https://github.com/owner/project/issues/1#issuecomment-${id}`,
+    createdAt: '2026-09-23T00:00:00Z',
+    updatedAt: '2026-09-23T00:00:00Z',
+    ...extra,
+  };
 }
 
 /**

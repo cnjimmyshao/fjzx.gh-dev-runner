@@ -8,6 +8,8 @@ import { accessSync, constants, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
+import { CAPTURE_MODES } from './exec.mjs';
+
 export const DEFAULT_CONFIG_PATH = join('.local', 'config.json');
 export const DEFAULT_COMMAND = '@dev';
 export const DEFAULT_POLL_SECONDS = 60;
@@ -117,11 +119,11 @@ export function parseConfig(raw, { configPath, machineId, home = homedir() } = {
     pollSeconds: Number.isInteger(runtimeRaw.pollSeconds) && runtimeRaw.pollSeconds > 0
       ? runtimeRaw.pollSeconds
       : DEFAULT_POLL_SECONDS,
-    logMode: optionalString(runtimeRaw.logMode, 'runtime.logMode') ?? 'file',
+    capture: optionalString(runtimeRaw.capture, 'runtime.capture') ?? 'file',
     keepRunLogs: Number.isInteger(runtimeRaw.keepRunLogs) && runtimeRaw.keepRunLogs > 0 ? runtimeRaw.keepRunLogs : 20,
   };
-  if (runtime.logMode !== 'file' && runtime.logMode !== 'inherit') {
-    fail(`runtime.logMode 只能是 file 或 inherit：${runtime.logMode}`);
+  if (!CAPTURE_MODES.includes(runtime.capture)) {
+    fail(`runtime.capture 只能是 ${CAPTURE_MODES.join(' 或 ')}：${runtime.capture}`);
   }
 
   if (!Array.isArray(raw.repositories) || raw.repositories.length === 0) {

@@ -38,20 +38,39 @@ const USAGE = `用法：node src/main.mjs [--config <path>] [--once] [--machine-
   --machine-id  覆盖配置里的执行机标识
   --capture     子进程输出捕获方式，缺省 file（写入日志目录）`;
 
-/** 单实例锁：写 pid，启动时发现锁被活着的进程占着就拒绝启动。 */
+/**
+ * 单实例锁：用独占创建（`wx`）原子地占锁，再核对锁里的 pid。
+ *
+ * 先 `wx` 建文件保证同一时刻只有一个进程能建立锁，避免「检查再写入」的竞态；建成功后发现
+ * 锁属于仍活着的其他进程时立刻释放并拒绝启动。陈旧锁（进程已不存在）可直接接管。
+ */
 export function acquireLock(lockPath) {
   mkdirSync(join(lockPath, '..'), { recursive: true });
-  try {
-    const existing = JSON.parse(readFileSync(lockPath, 'utf8'));
-    if (Number.isInteger(existing?.pid) && processAlive(existing.pid) && existing.pid !== process.pid) {
-      throw new ConfigError(`已有接单进程在运行（pid ${existing.pid}，锁 ${lockPath}）；不启动第二个写入者`);
+  const payload = `${JSON.stringify({ pid: process.pid, at: new Date().toISOString() })}\n`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      writeFileSync(lockPath, payload, { encoding: 'utf8', flag: 'wx' });
+      return () => rmSync(lockPath, { force: true });
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw new ConfigError(`无法创建实例锁 ${lockPath}：${error.message}`);
     }
-  } catch (error) {
-    if (error instanceof ConfigError) throw error;
-    // 锁文件损坏或读取失败：按陈旧锁处理，下面直接覆盖。
+    const owner = readLockOwner(lockPath);
+    if (owner !== null && owner !== process.pid && processAlive(owner)) {
+      throw new ConfigError(`已有接单进程在运行（pid ${owner}，锁 ${lockPath}）；不启动第二个写入者`);
+    }
+    // 陈旧锁（持有进程已不在或锁文件读不出 pid）：清掉后重试一次独占创建。
+    rmSync(lockPath, { force: true });
   }
-  writeFileSync(lockPath, `${JSON.stringify({ pid: process.pid, at: new Date().toISOString() })}\n`, 'utf8');
-  return () => rmSync(lockPath, { force: true });
+  throw new ConfigError(`实例锁被反复占用，无法启动：${lockPath}`);
+}
+
+function readLockOwner(lockPath) {
+  try {
+    const parsed = JSON.parse(readFileSync(lockPath, 'utf8'));
+    return Number.isInteger(parsed?.pid) ? parsed.pid : null;
+  } catch {
+    return null;
+  }
 }
 
 export function processAlive(pid) {
@@ -82,7 +101,6 @@ export async function main(argv = process.argv.slice(2)) {
   }
   const config = loadConfig({ configPath: options.configPath, machineId: options.machineId });
   if (options.capture !== undefined) config.runtime.capture = options.capture;
-  config.runtime.capture ??= 'file';
 
   const problems = checkConfig(config);
   if (problems.length > 0) {

@@ -24,6 +24,14 @@ function entry(ctx, issueNumber = 1) {
   return loadState(ctx.stateFile).repositories['owner/project'][String(issueNumber)];
 }
 
+/** 先跑一轮空基线，再追加命令；返回时 gh 会返回「历史 + 新命令」。 */
+async function withNewCommand(ctx, command, history = [comment(100, 'x')]) {
+  withComments(ctx.gh, { 'owner/project#1': history });
+  await ctx.runner.cycle();
+  withComments(ctx.gh, { 'owner/project#1': [...history, command] });
+  await ctx.runner.cycle();
+}
+
 test('首次接入把历史命令登记为已看过，不启动 Harness', async (t) => {
   const ctx = setup();
   t.after(() => cleanup(ctx.root));
@@ -48,6 +56,8 @@ test('启动后的新命令建立独立目录与会话，第二条命令续接�
   assert.equal(ctx.runs.length, 1);
   assert.equal(ctx.runs[0].requestedSession, null, '首轮新建会话');
   assert.equal(ctx.runs[0].cwd, entry(ctx).binding.dir, '在绑定的工作目录里启动');
+  assert.equal(ctx.runs[0].capture, 'file', '缺省用文件捕获');
+  assert.ok(ctx.runs[0].stdoutFile.endsWith('.stdout.log'), 'Harness 输出落本机日志');
   assert.ok(ctx.runs[0].task.includes('owner/project'), '启动消息指向目标仓库');
   assert.ok(ctx.runs[0].task.includes('Issue #1'), '启动消息指向目标 Issue');
   assert.ok(ctx.runs[0].task.includes('issuecomment-200'), '启动消息带上触发评论');
@@ -64,12 +74,23 @@ test('启动后的新命令建立独立目录与会话，第二条命令续接�
   assert.match(ctx.gh.created[1].body, /已接单：在该任务既有工作目录续接原 Harness 会话/);
 });
 
+test('公开回写只带任务目录名，不带本机绝对路径', async (t) => {
+  const ctx = setup();
+  t.after(() => cleanup(ctx.root));
+  await withNewCommand(ctx, comment(200, '@dev'));
+  assert.equal(ctx.gh.created.length, 1);
+  assert.ok(!ctx.gh.created[0].body.includes(ctx.config.runtime.stateDir), '不公开状态目录');
+  assert.ok(!ctx.gh.created[0].body.includes(ctx.root), '不公开本机根路径');
+  assert.match(ctx.gh.created[0].body, /任务目录：`task-root`/);
+});
+
 test('同一份进度不重复执行：下一轮不会重放已处理命令', async (t) => {
   const ctx = setup();
   t.after(() => cleanup(ctx.root));
+  const comments = [comment(100, 'x'), comment(300, '@dev')];
   withComments(ctx.gh, { 'owner/project#1': [comment(100, 'x')] });
   await ctx.runner.cycle();
-  withComments(ctx.gh, { 'owner/project#1': [comment(100, 'x'), comment(300, '@dev')] });
+  withComments(ctx.gh, { 'owner/project#1': comments });
   await ctx.runner.cycle();
   await ctx.runner.cycle();
   assert.equal(ctx.runs.length, 1, '同一命令只执行一次');
@@ -79,29 +100,40 @@ test('同一份进度不重复执行：下一轮不会重放已处理命令', as
 test('同一轮多条新命令只执行一条，另一条明确回复未启动', async (t) => {
   const ctx = setup();
   t.after(() => cleanup(ctx.root));
-  withComments(ctx.gh, { 'owner/project#1': [comment(100, 'x')] });
+  const history = [comment(100, 'x')];
+  withComments(ctx.gh, { 'owner/project#1': history });
   await ctx.runner.cycle();
 
-  withComments(ctx.gh, { 'owner/project#1': [comment(100, 'x'), comment(400, '@dev'), comment(401, '  @dev  ')] });
+  withComments(ctx.gh, { 'owner/project#1': [...history, comment(400, '@dev'), comment(401, '  @dev  ')] });
   await ctx.runner.cycle();
   assert.equal(ctx.runs.length, 1, '一条命令一次调用，不叠加第二个写入者');
   assert.equal(ctx.gh.created.length, 2, '执行一条并回复另一条');
+  assert.match(ctx.gh.created[0].body, /已接单：新建 Harness 会话/, '先回被执行的命令');
   assert.match(ctx.gh.created[1].body, /执行中，本条未启动；结束后重新发指令。/);
   assert.equal(entry(ctx).commands.find((item) => item.id === 401).status, 'busy');
 
-  withComments(ctx.gh, { 'owner/project#1': [comment(100, 'x'), comment(400, '@dev'), comment(401, '  @dev  ')] });
   await ctx.runner.cycle();
   assert.equal(ctx.runs.length, 1, '被回复未启动的命令不重试');
+});
+
+test('被编辑过的评论不算命令', async (t) => {
+  const ctx = setup();
+  t.after(() => cleanup(ctx.root));
+  const edited = comment(500, '@dev', 'maintainer', {
+    createdAt: '2026-09-23T00:00:00Z',
+    updatedAt: '2026-09-23T00:05:00Z',
+  });
+  await withNewCommand(ctx, edited);
+  assert.equal(ctx.runs.length, 0, '编辑过的评论不启动 Harness');
+  assert.equal(ctx.gh.created.length, 1);
+  assert.match(ctx.gh.created[0].body, /已被编辑/);
+  assert.equal(entry(ctx).seenSeq, 500, '进度仍推进，不会下轮重放');
 });
 
 test('未授权发起人的命令不启动，只回复未启动原因', async (t) => {
   const ctx = setup();
   t.after(() => cleanup(ctx.root));
-  withComments(ctx.gh, { 'owner/project#1': [comment(100, 'x')] });
-  await ctx.runner.cycle();
-
-  withComments(ctx.gh, { 'owner/project#1': [comment(100, 'x'), comment(500, '@dev', 'outsider')] });
-  await ctx.runner.cycle();
+  await withNewCommand(ctx, comment(500, '@dev', 'outsider'));
   assert.equal(ctx.runs.length, 0);
   assert.equal(ctx.gh.created.length, 1);
   assert.match(ctx.gh.created[0].body, /本条未启动/);
@@ -109,19 +141,28 @@ test('未授权发起人的命令不启动，只回复未启动原因', async (t
   assert.match(ctx.gh.created[0].body, /outsider/);
 });
 
-test('无标签、多标签或标签不匹配的 Issue 不启动', async (t) => {
+test('多执行机标签的 Issue 不启动，也不读评论', async (t) => {
   const ctx = setup({
     gh: {
       issues: [issue(5, 'runner:other'), issue(6, 'bug'), issue(8, LABEL, { labels: [LABEL, 'runner:mb02'] })],
     },
   });
   t.after(() => cleanup(ctx.root));
-  withComments(ctx.gh, { 'owner/project#8': [comment(100, 'x'), comment(600, '@dev')] });
+  await ctx.runner.cycle();
+  await ctx.runner.cycle();
 
-  await ctx.runner.cycle();
-  await ctx.runner.cycle();
+  assert.equal(ctx.gh.calls.listComments, 0, '标签不唯一的 Issue 连评论都不读');
   assert.equal(ctx.runs.length, 0, '多标签任务不启动');
-  assert.equal(ctx.gh.calls.listComments, 0, '标签不匹配的 Issue 连评论都不读');
+  assert.ok(ctx.logs.some((line) => line.includes('执行机标签') && line.includes('runner:mb02')));
+});
+
+test('Pull Request 条目不是接单入口', async (t) => {
+  const ctx = setup({ gh: { issues: [issue(9, LABEL, { fromPullRequest: true })] } });
+  t.after(() => cleanup(ctx.root));
+  await ctx.runner.cycle();
+  assert.equal(ctx.gh.calls.listComments, 0);
+  assert.equal(ctx.runs.length, 0);
+  assert.ok(ctx.logs.some((line) => line.includes('这是 Pull Request')));
 });
 
 test('GitHub 读取失败不启动任务，也不伪造完成', async (t) => {
@@ -139,11 +180,8 @@ test('GitHub 读取失败不启动任务，也不伪造完成', async (t) => {
 test('Harness 调用失败时如实回报失败，绑定与目录保留', async (t) => {
   const ctx = setup({ harness: { spawnThrows: new Error('spawn EPERM') } });
   t.after(() => cleanup(ctx.root));
-  withComments(ctx.gh, { 'owner/project#1': [comment(100, 'x')] });
-  await ctx.runner.cycle();
+  await withNewCommand(ctx, comment(700, '@dev'));
 
-  withComments(ctx.gh, { 'owner/project#1': [comment(100, 'x'), comment(700, '@dev')] });
-  await ctx.runner.cycle();
   assert.equal(ctx.runs.length, 0, '调用没有真正起来');
   assert.equal(ctx.gh.created.length, 2, '先接单再报失败');
   assert.match(ctx.gh.created[1].body, /接单后调用失败/);
@@ -153,22 +191,21 @@ test('Harness 调用失败时如实回报失败，绑定与目录保留', async 
   assert.ok(entry(ctx).binding.dir.includes('task-root'), '工作目录保留在绑定里');
 });
 
-test('回合以非 completed 结束不冒充成功', async (t) => {
+test('回合非零退出在 Issue 上留下可读原因，不冒充成功', async (t) => {
   const ctx = setup({
     harness: { exitCode: 1, status: { kind: 'error', error: { code: 'MISSING_CREDENTIAL', message: 'no API key' } } },
   });
   t.after(() => cleanup(ctx.root));
-  withComments(ctx.gh, { 'owner/project#1': [comment(100, 'x')] });
-  await ctx.runner.cycle();
-  withComments(ctx.gh, { 'owner/project#1': [comment(100, 'x'), comment(800, '@dev')] });
-  await ctx.runner.cycle();
+  await withNewCommand(ctx, comment(800, '@dev'));
 
   const record = entry(ctx);
   assert.equal(record.lastRun.kind, 'turn-failed');
   assert.equal(record.lastRun.statusKind, 'error');
   assert.equal(record.commands[0].status, 'turn-failed');
+  assert.equal(ctx.gh.created.length, 2, '接单一条、回合失败一条');
+  assert.match(ctx.gh.created[1].body, /回合没有正常完成/);
+  assert.match(ctx.gh.created[1].body, /MISSING_CREDENTIAL|no API key/);
   assert.ok(ctx.logs.some((line) => line.includes('exit=1') && line.includes('status=error')));
-  assert.equal(ctx.gh.created.length, 1, '回合失败不再重复刷评论');
 });
 
 test('回写反馈失败不导致同一次开发任务再执行', async (t) => {

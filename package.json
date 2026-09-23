@@ -1,6 +1,6 @@
 {
   "name": "fjzx-gh-dev-runner",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "本地 GitHub Issue 评论接单与 DeepSeek Harness 会话续接工具",
   "type": "module",

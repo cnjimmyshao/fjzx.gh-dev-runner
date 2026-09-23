@@ -1,14 +1,16 @@
 // 子进程调用：统一超时、输出捕获与结果结构。
 //
 // 两种输出捕获方式：
-//   `capture: 'file'`（缺省）由子进程自己把 stdout/stderr 写文件，调用结束后读取。真实
-//   CLI 输出因此天然落地到日志目录，也不依赖命名管道；不允许管道捕获子进程输出的受限
-//   环境同样可用。
+//   `capture: 'file'`（缺省）把子进程的 stdout/stderr 直接接到给定文件，调用结束后读回。
+//   真实 CLI 输出因此天然落地到日志目录，也不依赖命名管道；不允许管道捕获子进程输出的
+//   受限环境同样可用。
 //   `capture: 'pipe'` 走 stdout/stderr 管道，适合要在终端实时看子进程输出的场合。
 
 import { spawn } from 'node:child_process';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+
+export const CAPTURE_MODES = ['file', 'pipe'];
 
 /** 子进程无法启动或超时：调用方按调用失败回报，不当作模型结果或成功。 */
 export class ExecError extends Error {
@@ -50,18 +52,37 @@ export function execFileAsync(options) {
   if (useFiles && (stdoutFile === undefined || stderrFile === undefined)) {
     return Promise.reject(new ExecError('capture=file 需要同时给出 stdoutFile 与 stderrFile'));
   }
+  let stdoutFd;
+  let stderrFd;
   if (useFiles) {
-    mkdirSync(dirname(stdoutFile), { recursive: true });
-    mkdirSync(dirname(stderrFile), { recursive: true });
+    try {
+      mkdirSync(dirname(stdoutFile), { recursive: true });
+      mkdirSync(dirname(stderrFile), { recursive: true });
+      stdoutFd = openSync(stdoutFile, 'w');
+      stderrFd = openSync(stderrFile, 'w');
+    } catch (error) {
+      if (stdoutFd !== undefined) closeSync(stdoutFd);
+      return Promise.reject(new ExecError(`无法创建子进程输出文件：${error.message}`));
+    }
   }
 
   return new Promise((resolvePromise, reject) => {
     let child;
     try {
-      child = spawn(command, args, { cwd, env, windowsHide: true });
+      child = spawn(command, args, {
+        cwd,
+        env,
+        windowsHide: true,
+        // file 模式把子进程的 stdout/stderr 直接接到文件，父进程不占管道。
+        stdio: useFiles ? ['ignore', stdoutFd, stderrFd] : ['ignore', 'pipe', 'pipe'],
+      });
     } catch (error) {
       reject(new ExecError(`${command} 无法启动：${error.message}`, { code: error.code }));
       return;
+    } finally {
+      // 描述符已交给子进程：父进程必须关掉自己的副本，否则句柄泄漏且文件可能读不完整。
+      if (stdoutFd !== undefined) closeSync(stdoutFd);
+      if (stderrFd !== undefined) closeSync(stderrFd);
     }
     let stdout = '';
     let stderr = '';
@@ -77,9 +98,8 @@ export function execFileAsync(options) {
 
     child.stdout?.setEncoding('utf8');
     child.stderr?.setEncoding('utf8');
-    // file 模式仍然读完管道（否则子进程可能写满缓冲区阻塞），但不留内存副本。
-    child.stdout?.on('data', (chunk) => { if (!useFiles) stdout += chunk; });
-    child.stderr?.on('data', (chunk) => { if (!useFiles) stderr += chunk; });
+    child.stdout?.on('data', (chunk) => { stdout += chunk; });
+    child.stderr?.on('data', (chunk) => { stderr += chunk; });
 
     const finish = (fn, value) => {
       if (settled) return;

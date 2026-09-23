@@ -48,7 +48,7 @@
 | `runtime.stateDir` | 状态、日志与临时输出目录；缺省 `~/.fjzx-gh-dev-runner` |
 | `runtime.workspaceDir` | worktree 缺省父目录 |
 | `runtime.pollSeconds` | 检查间隔，缺省 60 秒 |
-| `runtime.logMode` | `file`（输出落本机日志）或 `inherit`（子进程直接打印，需要现场观察时用） |
+| `runtime.capture` | 子进程输出捕获：`file`（缺省，落到该轮日志目录）或 `pipe`（在终端直接看输出） |
 | `runtime.keepRunLogs` | 每个任务保留的最近调用次数，缺省 20 |
 | `github.command` | 命令词，缺省 `@dev` |
 | `github.timeoutMs` | 单次 `gh` 调用超时，缺省 120 秒 |
@@ -79,11 +79,14 @@ node src/main.mjs --capture pipe          # 临时改为管道捕获，在终端
 
 ## 接单规则
 
-- 只在已接入仓库的 **Open Issue** 上工作，且该 Issue 恰好带有本机标签 `runner:<machineId>`。
-  无标签、多标签、属于别的执行机都不启动；改标签本身不启动任务，也不把已绑定任务迁到别的电脑。
+- 只在已接入仓库的 **Open Issue** 上工作，且该 Issue **恰好**带一个执行机标签，就是本机的
+  `runner:<machineId>`。无标签、多标签、带别的执行机标签都不启动；改标签本身不启动任务，也不把
+  已绑定任务迁到别的电脑。`issues` 接口同时返回的 Pull Request 不是接单入口。
 - 只有 `allowedActors` 里的发起人发布的、正文去除首尾空白后**恰好等于** `@dev` 的独立评论才算
-  命令。编辑过的评论、引用或代码块里的 `@dev`、长评论中的片段都不算；继续任务要另发一条新评论。
-- 同一条命令只执行一次。进度在启动 Harness 之前落盘，重复轮询、重复拉取与正常重启都不会重放。
+  命令。**编辑过的评论不算命令**（`created_at` 与 `updated_at` 不同即排除），引用或代码块里的
+  `@dev`、长评论中的片段也不算；继续任务要另发一条新评论。
+- 同一条命令只执行一次。进度与「已认领」在同一次落盘、且都在启动 Harness 之前，重复轮询、重复
+  拉取与正常重启都不会重放。
 - 同一任务一次只跑一个写入者。本轮已有调用时，其余新命令立即回复「执行中，本条未启动；结束后
   重新发指令」，不排队、不在下一轮补跑。
 - 首次接入从启动时点开始：已存在的评论只登记为已看过，不重放历史命令。
@@ -102,20 +105,26 @@ node src/main.mjs --capture pipe          # 临时改为管道捕获，在终端
 ## 状态、日志与反馈
 
 ```text
-<stateDir>/state.json                  # 绑定、进度、命令处理记录（本机）
-<stateDir>/runner.lock                 # 单实例锁
-<stateDir>/logs/<repo>-issue-<n>/...   # 每轮调用的 result.json / stdout.log / stderr.log
-<stateDir>/logs/runner-YYYY-MM-DD.log  # 接单过程日志（token 形态已脱敏）
-<stateDir>/tmp/                        # gh 输出临时文件
+<stateDir>/state.json                          # 绑定、进度、命令处理记录（本机）
+<stateDir>/runner.lock                         # 单实例锁（独占创建，活着的持有进程会让第二个实例退出）
+<stateDir>/logs/<repo>-issue-<n>/<时间>-<评论 id>/
+    result.json                                # 本轮调用的结构化结果（sessionId、status）
+    harness.stdout.log / harness.stderr.log    # Harness 原始输出（capture=file 时）
+    git.stdout.log / git.stderr.log            # 建 worktree 的 git 输出
+<stateDir>/logs/runner-YYYY-MM-DD.log          # 接单过程日志（token 形态已脱敏）
+<stateDir>/tmp/                                # gh 输出临时文件
 ```
 
 进程启动、回合结束、Dev 自报完成、业务验收是四件事：退出码 `0` 且 `status.kind=completed`
 只表示本轮 turn 正常结束，不代表任务完成或测试、Review 通过。这类结论由 Dev 按目标项目规则
 报告，工具不代判。
 
-评论只回必要的几条，不每分钟刷：接单（新建／续接，含工作目录与会话标识）、执行中未启动、
-未授权或路由不符、调用失败、上次调用结果不确定。回写失败只记本机日志，**不会**因此重跑同一次
-开发任务。
+评论只回必要的几条，不每分钟刷：接单（新建／续接，含任务目录名与会话标识）、执行中未启动、
+未授权或路由不符、编辑过的评论未启动、调用失败、**回合没有正常完成**、上次调用结果不确定。
+回写失败只记本机日志，**不会**因此重跑同一次开发任务。
+
+公开评论只带执行机、会话标识与任务目录名（`binding.dir` 的最后一段）；本机绝对路径、完整模型
+输出与凭据留在本机日志，不进公开评论。
 
 ## 已知限制
 

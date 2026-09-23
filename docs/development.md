@@ -7,14 +7,19 @@
 
 | 命令 | 说明 |
 | --- | --- |
-| `npm test` | 自动化测试，不访问 GitHub、不调用模型、不启动真实会话 |
+| `npm test` | 自动化测试；`gh` 与 Harness 调用用替身隔离，另有两个真实的只读冒烟项 |
 | `npm run once` | 只检查一轮后退出，用于首次核对配置与 `gh` 授权 |
 | `npm start` | 常驻，按 `runtime.pollSeconds`（缺省 60 秒）检查接入仓库的新评论 |
 
 本工具自身的 Node.js 进程不是本地模型推理服务；模型调用仍由它启动的 Harness headless CLI 完成。
-自动化测试用替身 `gh` 与替身 CLI 覆盖评论解析、分页与进度、授权路由、去重、绑定、单写入者与
-重启恢复；与真实 GitHub 评论、真实 Harness 会话的端到端联调需要维护者提供授权的测试 Issue 后
-再做，当前没有该证据。
+
+测试分层：多数用例用替身隔离 GitHub 与 Harness，覆盖评论解析、分页与进度、授权路由、去重、绑定、
+单写入者与重启恢复；另有几项走真实边界——真实 `execFileAsync` 的 file 捕获与超时、真实 `git
+worktree add`、以及对本仓库公开 Issue 的一次真实只读 `gh` 调用（未登录或无网络时明确跳过并打印
+原因，跳过不算通过）。这些都不调用模型、不启动真实 Harness 会话。
+
+真实接单链路（真实评论命令 → 真实 Harness 会话 → 真实回写）需要维护者提供授权的测试 Issue 与
+独立目录；§Runtime 联调证据当前为空。
 
 运行方向已按 [ADR 0002](decisions/0002-headless-cli-execution.md) 改为直接启动 headless CLI。原 [Issue #3](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/3)／[PR #4](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/pull/4) 的 Web 实验独立收尾；不改写其实验事实，也不把它当作 CLI 已验证。
 
@@ -64,10 +69,13 @@ GitHub 资料入口：[gh api](https://cli.github.com/manual/gh_api)、[Issue co
 
 `scripts/headless-session/` 的用法与已验证步骤见其 [README](../scripts/headless-session/README.md)：不调用模型的路径（缺 `DSH_TASK`、引用不存在的会话标识、工作目录不匹配）可直接重跑，不需要 Key；新建与续接需要有效 Key，属本机实测项。
 
-接单程序的自动化测试（`npm test`）用替身隔离 GitHub 与 Harness，覆盖成功路径、关键非法输入与状态、
-去重与单写入者：注释见测试文件本身。可在本机直接重跑，不访问网络、不调用模型。
+接单程序的自动化测试（`npm test`）分两层：多数用例用替身隔离 GitHub 与 Harness，覆盖成功路径、
+关键非法输入与状态、去重与单写入者；少数用例走真实边界——真实 `execFileAsync`（file 捕获、超时、
+命令不存在）、真实 `git worktree add`、对本仓库公开 Issue 的一次真实只读 `gh` 读取。替身只替换
+进程与网络边界，被测判定逻辑仍是生产代码；真实边界用例在环境不支持时明确跳过并打印原因。全部
+用例都不调用模型、不启动真实 Harness 会话，可在本机直接重跑。
 
-真实端到端只使用维护者确认的专用测试 Issue、独立目录与少量测试消息：`npm run once` 用于核对配置与
+真实接单链路只使用维护者确认的专用测试 Issue、独立目录与少量测试消息：`npm run once` 用于核对配置与
 `gh` 授权；真实接单需要授权的测试仓库、标签 `runner:<machineId>` 与真实 Harness 会话。没有授权时
 只做代码与隔离测试，并在关联 Issue 精确列出缺口，不把模拟测试当本机实测。第一条端到端链路通过后，
 再验证第二台电脑不会重复领取同一任务。

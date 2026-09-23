@@ -57,6 +57,8 @@ export function normalizeIssue(raw) {
     assignees: Array.isArray(raw.assignees)
       ? raw.assignees.map((user) => user?.login).filter((login) => typeof login === 'string')
       : [],
+    // issues 接口同时返回 Pull Request；这类条目不是 Issue，不参与接单。
+    fromPullRequest: raw.pull_request !== undefined && raw.pull_request !== null,
   };
 }
 
@@ -68,6 +70,8 @@ export function normalizeComment(raw) {
     body: typeof raw.body === 'string' ? raw.body : '',
     author: typeof login === 'string' && login !== '' ? login : '(unknown)',
     url: typeof raw.url === 'string' && raw.url !== '' ? raw.url : null,
+    createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : null,
+    updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : null,
   };
 }
 
@@ -121,13 +125,21 @@ export function createGhClient({
     /** 只取本仓库已设置本机路由标签的 Open Issue：标签过滤在服务端完成。 */
     async listOpenIssues({ repo, label }) {
       const path = `repos/${repo}/issues?state=open&labels=${encodeURIComponent(label)}&per_page=${pageSize}`;
-      const raw = await apiJsonLines(path, '.[] | {number, title, url: .html_url, labels, assignees}', 'issues');
+      const raw = await apiJsonLines(
+        path,
+        '.[] | {number, title, url: .html_url, labels, assignees, pull_request}',
+        'issues',
+      );
       return raw.map(normalizeIssue);
     },
 
     async listComments({ repo, issueNumber }) {
       const path = `repos/${repo}/issues/${issueNumber}/comments?per_page=${pageSize}`;
-      const raw = await apiJsonLines(path, '.[] | {id, body, author: .user, url: .html_url}', 'comments');
+      const raw = await apiJsonLines(
+        path,
+        '.[] | {id, body, author: .user, url: .html_url, createdAt: .created_at, updatedAt: .updated_at}',
+        'comments',
+      );
       return raw.map(normalizeComment);
     },
 

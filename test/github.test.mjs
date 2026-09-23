@@ -40,14 +40,31 @@ test('读取 Open Issue 时按仓库标签在服务端过滤并逐行解析 JSON
   assert.equal(calls[0].command, 'gh');
 });
 
-test('评论读取走 issues/<n>/comments 分页接口', async () => {
+test('评论读取走 issues/<n>/comments 分页接口，并带上编辑时间戳', async () => {
   const { exec, calls } = fakeGh([
-    { stdout: `${JSON.stringify({ id: 5, body: '@dev', author: { login: 'maintainer' }, url: 'https://x/5' })}\n` },
+    {
+      stdout: `${JSON.stringify({
+        id: 5,
+        body: '@dev',
+        author: { login: 'maintainer' },
+        url: 'https://x/5',
+        createdAt: '2026-09-23T00:00:00Z',
+        updatedAt: '2026-09-23T00:00:00Z',
+      })}\n`,
+    },
   ]);
   const gh = createGhClient({ exec, capture: 'pipe' });
   const comments = await gh.listComments({ repo: 'owner/project', issueNumber: 9 });
-  assert.deepEqual(comments, [{ id: 5, body: '@dev', author: 'maintainer', url: 'https://x/5' }]);
+  assert.deepEqual(comments, [{
+    id: 5,
+    body: '@dev',
+    author: 'maintainer',
+    url: 'https://x/5',
+    createdAt: '2026-09-23T00:00:00Z',
+    updatedAt: '2026-09-23T00:00:00Z',
+  }]);
   assert.ok(calls[0].args.some((arg) => arg.includes('repos/owner/project/issues/9/comments')));
+  assert.ok(calls[0].args.some((arg) => arg.includes('updated_at')), 'jq 取回编辑时间戳，供「编辑过的评论不算命令」判定');
 });
 
 test('分页返回多行 JSONL 时全部保留', async () => {

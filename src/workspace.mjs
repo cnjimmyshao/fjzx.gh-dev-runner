@@ -26,20 +26,32 @@ function isDirectory(path) {
   }
 }
 
-async function gitSucceeded(exec, args) {
+/**
+ * git 调用的输出捕获与其它子进程一致：缺省把结果落到给定文件，调用结束后读回；
+ * 只要退出码与 stderr 摘要，因此文件用完即不再需要。
+ */
+async function gitSucceeded(exec, args, { capture, files }) {
   try {
-    const result = await exec({ command: 'git', args, timeoutMs: 120000 });
-    return result.exitCode === 0 ? { ok: true } : { ok: false, message: (result.stderr ?? '').trim().split(/\r?\n/)[0] ?? '' };
+    const result = await exec({
+      command: 'git',
+      args,
+      timeoutMs: 120000,
+      capture,
+      ...(files === undefined ? {} : files),
+    });
+    if (result.exitCode === 0) return { ok: true };
+    const message = (result.stderr ?? '').trim().split(/\r?\n/)[0] ?? '';
+    return { ok: false, message };
   } catch (error) {
     return { ok: false, message: error.message };
   }
 }
 
 /**
- * @returns {Promise<{ok: true, dir: string, branch: string, source: string|null, worktreeCreated: boolean}
+ * @returns {Promise<{ok: true, dir: string, branch: string|null, source: string|null, worktreeCreated: boolean}
  *   | {ok: false, reason: string}>}
  */
-export async function prepareWorkspace({ repository, issueNumber, exec, existing, tempPath }) {
+export async function prepareWorkspace({ repository, issueNumber, exec, existing, capture = 'file', files }) {
   if (existing !== null && existing !== undefined) {
     if (!isDirectory(existing.dir)) {
       return {
@@ -61,7 +73,7 @@ export async function prepareWorkspace({ repository, issueNumber, exec, existing
     // worktree 在 sourceDir 之外时 git 需要目标父目录已存在；已存在则交给 git 自己判定。
     if (!isDirectory(path)) {
       mkdirSync(dirname(path), { recursive: true });
-      const created = await gitSucceeded(exec, worktreeArgs({ repository, issueNumber, path }));
+      const created = await gitSucceeded(exec, worktreeArgs({ repository, issueNumber, path }), { capture, files });
       if (!created.ok) {
         rmSync(path, { recursive: true, force: true });
         return {

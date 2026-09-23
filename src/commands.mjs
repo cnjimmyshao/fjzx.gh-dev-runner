@@ -12,6 +12,16 @@ export function parseCommand(body, command = '@dev') {
 }
 
 /**
+ * 首版不接收被编辑过的评论作为命令：把一条新评论改成命令词同样能唤醒真实执行，
+ * 与「必须新发布一条独立评论」的入口语义不符。缺少时间戳时按未编辑处理，由下面的
+ * 第 1 项（正文恰好等于命令词）兜住绝大多数情况。
+ */
+export function isEdited(comment) {
+  if (typeof comment?.createdAt !== 'string' || typeof comment?.updatedAt !== 'string') return false;
+  return comment.createdAt !== comment.updatedAt;
+}
+
+/**
  * 从一次评论读取结果中挑出本轮要处理的命令评论。
  *
  * @param {object} input
@@ -31,12 +41,14 @@ export function collectCommands({ comments, sinceSeq, isAuthorized, command }) {
   );
   const selected = [];
   const ignored = [];
+  const edited = [];
   for (const item of commandComments) {
-    if (isAuthorized(item.author)) selected.push(item);
+    if (isEdited(item)) edited.push(item);
+    else if (isAuthorized(item.author)) selected.push(item);
     else ignored.push(item);
   }
   // 一条任务只接一条新命令；多余命令不排队，由调用方回报「未启动」。
-  return { newestSeq, selected, ignored };
+  return { newestSeq, selected, ignored, edited };
 }
 
 /** 命令评论里要进入日志和任务上下文的字段，避免把整条评论对象带进状态文件。 */
@@ -48,7 +60,6 @@ export function commandRef(comment) {
     url: comment?.url ?? null,
   };
 }
-
 /**
  * 交给 Dev 的启动消息：只说明目标仓库、Issue 与触发评论，并要求 Dev 自己读取目标项目
  * 的规则与最新决定。任务要求不在这里复述。

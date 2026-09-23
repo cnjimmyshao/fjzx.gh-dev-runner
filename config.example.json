@@ -12,7 +12,7 @@
     "stateDir": ".local/state",
     "workspaceDir": ".local/workspaces",
     "pollSeconds": 60,
-    "logMode": "file",
+    "capture": "file",
     "keepRunLogs": 20
   },
   "github": {

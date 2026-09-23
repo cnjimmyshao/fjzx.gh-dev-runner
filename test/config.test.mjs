@@ -23,8 +23,7 @@ test('缺省值补齐命令词、轮询间隔与子进程捕获方式', () => {
   assert.equal(config.github.command, '@dev');
   assert.equal(config.github.pageSize, 100);
   assert.equal(config.runtime.pollSeconds, 60);
-  assert.equal(config.runtime.capture, undefined, 'capture 由入口按 --capture 决定');
-  assert.equal(config.runtime.logMode, 'file');
+  assert.equal(config.runtime.capture, 'file', '缺省把子进程输出落到日志文件');
   assert.equal(config.repositories[0].label, 'runner:mb01');
   assert.equal(runnerLabel('dev-a'), 'runner:dev-a');
 });
@@ -90,7 +89,8 @@ test('路径支持 ~ 与相对配置文件目录展开', () => {
 });
 
 test('非法捕获方式与非整数间隔不进入运行期', () => {
-  assert.throws(() => parse({ runtime: { logMode: 'socket' } }), /logMode/);
+  assert.throws(() => parse({ runtime: { capture: 'socket' } }), /runtime.capture/);
+  assert.equal(parse({ runtime: { capture: 'pipe' } }).runtime.capture, 'pipe');
   assert.equal(parse({ runtime: { pollSeconds: -1 } }).runtime.pollSeconds, 60);
   assert.equal(parse({ github: { pageSize: 500 } }).github.pageSize, 100);
   assert.equal(parse({ github: { pageSize: 10 } }).github.pageSize, 10);
