@@ -1,6 +1,8 @@
 # 本地轻量接单与会话续接
 
-Status: ACCEPTED
+Status: PARTIALLY_SUPERSEDED
+
+2026-09-23 更新：[ADR 0002](0002-headless-cli-execution.md) 替代本记录中“接入常驻 Harness Web、在原网页观察”的部分。本地增量接单、多执行机、任务会话绑定与不建设全流程编排的决定继续有效。下文保留原决策语境，不再作为 Web 接入的当前要求；当前行为以 `docs/current/` 为准。
 
 依据：维护者确认的项目方向，已在本仓库 Issue #1 记录。本决定说明目标边界，不代表代码或运行环境已经验证。
 
