@@ -10,6 +10,11 @@ coverage/
 *.local.json
 *.log
 
+# Local dev worktrees created for Issue tasks
+.wts/
+
 # Operating system metadata
 .DS_Store
 Thumbs.db
+
+

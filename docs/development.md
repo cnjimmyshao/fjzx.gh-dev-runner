@@ -2,9 +2,19 @@
 
 ## 当前就绪情况
 
-目前只有规则、需求、文档入口与 Research 阶段的最小调用件（[`scripts/headless-session/`](../scripts/headless-session/README.md)），没有接单运行代码、package.json、依赖锁文件、测试脚本或 Actions Workflow。不能执行不存在的 npm 命令，也不能将这份说明当作环境已部署的证明。
+接单程序位于 [`src/`](../src/README.md)，随仓库带最小 `package.json`、测试入口与脱敏配置示例
+（[`config.example.json`](../config.example.json)）；没有第三方依赖，`npm install` 不安装任何包。
 
-接单工具计划采用 Node.js。首次代码 PR 建立最小 package.json、必要锁文件与真正可运行的测试命令，不先铺空模块或假测试。工具自身的 Node.js 进程不是本地模型推理服务。
+| 命令 | 说明 |
+| --- | --- |
+| `npm test` | 自动化测试，不访问 GitHub、不调用模型、不启动真实会话 |
+| `npm run once` | 只检查一轮后退出，用于首次核对配置与 `gh` 授权 |
+| `npm start` | 常驻，按 `runtime.pollSeconds`（缺省 60 秒）检查接入仓库的新评论 |
+
+本工具自身的 Node.js 进程不是本地模型推理服务；模型调用仍由它启动的 Harness headless CLI 完成。
+自动化测试用替身 `gh` 与替身 CLI 覆盖评论解析、分页与进度、授权路由、去重、绑定、单写入者与
+重启恢复；与真实 GitHub 评论、真实 Harness 会话的端到端联调需要维护者提供授权的测试 Issue 后
+再做，当前没有该证据。
 
 运行方向已按 [ADR 0002](decisions/0002-headless-cli-execution.md) 改为直接启动 headless CLI。原 [Issue #3](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/3)／[PR #4](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/pull/4) 的 Web 实验独立收尾；不改写其实验事实，也不把它当作 CLI 已验证。
 
@@ -28,7 +38,7 @@
 
 首台实测使用维护者指定的执行电脑，先覆盖其实际系统；第二台再验证同一程序的配置与路由隔离，不在没有证据时声明全平台支持。
 
-## 先验证 CLI，再开发接单
+## 一次性 CLI 接入验证（重跑口径）
 
 这是一次性接入验证，不是本工具的环境诊断功能，也不要求每次接单重新检查整台电脑。本机 0.1.5-rc.2 的执行结果已记录在上面与 Research 报告中；下列步骤保留作为重跑口径，以及日后授权升级或换机时的核对清单。在独立测试目录、测试会话与不干扰现有工作的持久化配置中进行：
 
@@ -44,15 +54,23 @@
 
 ## 后续最小实现
 
-CLI 验证确认可用后，再写明确的实施 Issue：少量本机配置与凭据保存、通过 `gh` 增量检查评论、执行机路由、去重及任务绑定、CLI 启动／续接、必要日志与反馈。新增文件按实际职责组织，不预建 Scheduler、Repository、Adapter 等整套层次。
+接单工具的最小实现已按 [Issue #9](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/9) 落地：
+本机配置、通过 `gh` 增量检查评论、执行机路由、去重与任务绑定、CLI 启动／续接、必要日志与反馈，
+代码按实际职责放在 [`src/`](../src/README.md)，没有预建 Scheduler、Repository、Adapter 层次。
 
-GitHub 资料入口：[gh api](https://cli.github.com/manual/gh_api)、[Issue comments API](https://docs.github.com/en/rest/issues/comments)。后续按实际接口核对分页、更新时间和限流，验证初次启动与普通重启不会重放历史命令，不靠不断创建 Actions run 检查状态。
+GitHub 资料入口：[gh api](https://cli.github.com/manual/gh_api)、[Issue comments API](https://docs.github.com/en/rest/issues/comments)。当前实现用 `gh api --paginate -q '.[] | {…}'` 逐行读取，标签过滤在服务端完成，限流按错误文本识别并在下一轮重试。
 
 ## 验证分层
 
 `scripts/headless-session/` 的用法与已验证步骤见其 [README](../scripts/headless-session/README.md)：不调用模型的路径（缺 `DSH_TASK`、引用不存在的会话标识、工作目录不匹配）可直接重跑，不需要 Key；新建与续接需要有效 Key，属本机实测项。
 
-文档改动检查相对链接、术语、权限、Scope 与隐私，不触发模型或真实任务。纯逻辑测试优先隔离 GitHub／Harness；实际 CLI 验证只使用明确授权的测试会话，GitHub 端到端测试另使用授权的测试仓库。第一条端到端链路通过后，再验证第二台电脑不会重复领取同一任务。
+接单程序的自动化测试（`npm test`）用替身隔离 GitHub 与 Harness，覆盖成功路径、关键非法输入与状态、
+去重与单写入者：注释见测试文件本身。可在本机直接重跑，不访问网络、不调用模型。
+
+真实端到端只使用维护者确认的专用测试 Issue、独立目录与少量测试消息：`npm run once` 用于核对配置与
+`gh` 授权；真实接单需要授权的测试仓库、标签 `runner:<machineId>` 与真实 Harness 会话。没有授权时
+只做代码与隔离测试，并在关联 Issue 精确列出缺口，不把模拟测试当本机实测。第一条端到端链路通过后，
+再验证第二台电脑不会重复领取同一任务。
 
 结果记录命令、环境、验证版本、通过／失败／跳过及未覆盖范围。没有运行就写未运行，不预填 pass 数量。进程是否成功启动、模型是否成功回答、原会话是否正确续接、输出是否可读取分别给证据，不把某一层成功等同于开发任务验收完成。
 

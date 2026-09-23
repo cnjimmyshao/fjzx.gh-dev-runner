@@ -1,0 +1,36 @@
+{
+  "comment": "脱敏示例：复制为 .local/config.json 后按本机实际情况修改。凭证不写在这里。",
+  "machineId": "mb01",
+  "harness": {
+    "bin": "<dsh 安装的 lib/bin.js>",
+    "profile": "headless",
+    "patch": "<本仓库>/scripts/headless-session/overlay.yml",
+    "home": "<本机 DSH_HOME，可省略用缺省 ~/.dsh>",
+    "timeoutMs": 900000
+  },
+  "runtime": {
+    "stateDir": ".local/state",
+    "workspaceDir": ".local/workspaces",
+    "pollSeconds": 60,
+    "logMode": "file",
+    "keepRunLogs": 20
+  },
+  "github": {
+    "command": "@dev",
+    "timeoutMs": 120000,
+    "pageSize": 50
+  },
+  "repositories": [
+    {
+      "repo": "owner/project",
+      "allowedActors": ["maintainer-login"],
+      "sourceDir": "<部署者的仓库检出目录>",
+      "baseBranch": "main"
+    },
+    {
+      "repo": "owner/other-project",
+      "allowedActors": ["maintainer-login", "second-maintainer"],
+      "repoDir": "<已备好的任务根目录>"
+    }
+  ]
+}
