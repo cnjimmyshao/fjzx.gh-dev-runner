@@ -212,6 +212,8 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
       log(`调用失败 ${repo}#${issue.number}：${message}`);
       entry.lastRun = { at: new Date().toISOString(), kind: 'failed', detail: message, dir: plan.dir, runDir };
       save();
+      // 调用失败的轮次同样留下 runDir，也要按保留上限清理，否则反复失败的调用会一直堆积。
+      pruneRunLogs(taskLogDir(repo, issue.number), runtime.keepRunLogs);
       await feedback({ repo, issueNumber: issue.number, body: formatComment({ kind: 'failed', binding, detail: message }) });
       return { kind: 'failed', detail: message };
     }
@@ -353,7 +355,7 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
       issues = await gh.listOpenIssues({ repo: repository.repo, label: repository.label });
     } catch (error) {
       log(`读取 Issue 失败 ${repository.repo}：${error.message}${error.rateLimited === true ? '（疑似限流，下轮重试）' : ''}`);
-      return;
+      return false;
     }
     for (const issue of issues) {
       if (issue.fromPullRequest === true) {
@@ -376,6 +378,7 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
       }
       await handleComments({ repository, issue: { ...issue, comments }, comments });
     }
+    return true;
   }
 
   /**
@@ -386,7 +389,15 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
    * 同一条评论——否则这条已授权的命令会因为「已认领」而被永久跳过。
    */
   async function recover() {
+    // 只处理当前配置里仍然接入、且分配给本机的仓库：仓库被移除或任务已迁到别的机器后，
+    // 旧状态里的 claimed 记录不该再产生评论、也不该把 seenSeq 回退成待重试。
+    const routable = new Map(
+      config.repositories
+        .filter((repository) => repository.machineId === config.runnerId)
+        .map((repository) => [repository.repo, repository]),
+    );
     for (const [repo, bucket] of Object.entries(state.repositories)) {
+      if (!routable.has(repo)) continue;
       for (const [number, entry] of Object.entries(bucket)) {
         const claimed = (entry.commands ?? []).filter((item) => item.status === 'claimed');
         if (claimed.length === 0) continue;
@@ -421,14 +432,21 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
     }
   }
 
+  /**
+   * 跑一轮检查。返回本轮是否所有仓库都读成功——`--once` 用它决定退出码，避免「未登录／
+   * 权限不足／限流」时静默返回成功。
+   */
   async function cycle() {
+    const failures = [];
     for (const repository of config.repositories) {
       if (repository.machineId !== config.runnerId) {
         log(`配置跳过 ${repository.repo}：machineId=${repository.machineId}，本机 ${config.runnerId}`);
         continue;
       }
-      await runRepository(repository);
+      const ok = await runRepository(repository);
+      if (ok === false) failures.push(repository.repo);
     }
+    return { failures };
   }
 
   return { cycle, recover, execute, handleComments, stateFile, state };

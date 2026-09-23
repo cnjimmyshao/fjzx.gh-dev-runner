@@ -393,6 +393,8 @@ test('状态文件损坏时明确失败，不覆盖原文件', async (t) => {
 test('不同仓库的同号 Issue 各自绑定，不混淆', async (t) => {
   const root = makeTempDir();
   t.after(() => cleanup(root));
+  // repoDir 是「部署者已备好的任务根目录」，必须预先存在。
+  for (const name of ['one', 'two']) mkdirSync(join(root, name), { recursive: true });
   const { config } = baseConfig({
     root,
     overrides: {

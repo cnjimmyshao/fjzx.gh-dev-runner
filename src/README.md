@@ -57,7 +57,7 @@
 | `repositories[].allowedActors` | 允许发起命令的 GitHub 登录名；空数组视为配置错误 |
 | `repositories[].machineId` | 可选；该仓库用别的执行机标识时填 |
 | `repositories[].sourceDir` | 部署者已有的仓库检出；工具从它 `git worktree add` 出独立任务目录 |
-| `repositories[].repoDir` | 已经备好的任务根目录（工具不代替维护者做首次 clone） |
+| `repositories[].repoDir` | 已经备好的任务根目录；必须已存在（工具不代替维护者做首次 clone，也不代建空目录） |
 | `repositories[].baseBranch` | 可选；worktree 的起点，缺省用 sourceDir 的当前 HEAD |
 | `repositories[].worktreeDir` | 可选；worktree 父目录，缺省 `<workspaceDir>/<owner-name>` |
 
@@ -68,7 +68,7 @@
 
 ```powershell
 npm test                                  # 自动化测试，不访问 GitHub、不调用模型
-node src/main.mjs --once                  # 只检查一轮后退出，用于首次核对
+node src/main.mjs --once                  # 只检查一轮后退出，用于首次核对；有仓库读不出来时退出码非零
 node src/main.mjs                         # 常驻，按 runtime.pollSeconds 循环
 node src/main.mjs --config .local/config.json --machine-id mb01
 node src/main.mjs --capture pipe          # 临时改为管道捕获，在终端直接看子进程输出
@@ -96,8 +96,10 @@ node src/main.mjs --capture pipe          # 临时改为管道捕获，在终端
 每个「仓库 + Issue」绑定一个执行机、一个独立工作目录、一个会话标识与已知分支／PR：
 
 - 给了 `sourceDir` 时首次任务执行 `git worktree add -b fjzx/issue-<n> <worktreeDir>/issue-<n>`，
-  不与部署者的检出互相影响；worktree 建失败就报告，不静默改用别的目录。
-- 给了 `repoDir` 时直接使用那个已备好的任务根目录。
+  不与部署者的检出互相影响；worktree 建失败就报告，不静默改用别的目录。目标路径已存在时交给
+  git 判定（可能已是同一任务的既有工作树）。
+- 给了 `repoDir` 时直接使用那个已备好的任务根目录；**目录必须已存在**（不存在说明路径写错或还没
+  准备），工具不代建空目录，避免 Harness 在没有目标仓库的情况下开工。
 - 首轮启动后把返回的真实 `sessionId` 写进绑定；后续命令在**同一目录**带该标识续接原会话。
 - 目录不存在、绑定属于别的执行机、绑定来源与配置不一致时，报告并停止，不静默新建会话或换目录。
 - 上次调用在取得会话标识前中断时，保留绑定与目录，下一轮在同一目录新建会话并在 Issue 说明。

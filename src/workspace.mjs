@@ -100,11 +100,14 @@ export async function prepareWorkspace({ repository, issueNumber, exec, existing
     };
   }
 
+  // repoDir 的 Contract 是「部署者已经备好的任务根目录」：不存在说明路径写错或还没准备，
+  // 此时静默建一个空目录会让 Harness 在没有目标仓库的情况下开工，因此明确报错。
   const dir = repository.repoDir;
-  try {
-    mkdirSync(dir, { recursive: true });
-  } catch (error) {
-    return { ok: false, reason: `无法准备任务目录 ${dir}：${error.message}` };
+  if (!isDirectory(dir)) {
+    return {
+      ok: false,
+      reason: `repoDir 不存在或不是目录：${dir}。请先在该机器上准备好任务仓库；本工具不代替维护者做首次 clone。`,
+    };
   }
   return { ok: true, dir, branch: null, source: null, worktreeCreated: false };
 }

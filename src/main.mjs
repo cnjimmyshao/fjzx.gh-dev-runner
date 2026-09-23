@@ -144,11 +144,17 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     logLine(config.runtime.stateDir, `接单启动：执行机 ${config.runnerId}，仓库 ${config.repositories.map((item) => item.repo).join(', ')}`);
     await runner.recover();
+    let lastCycle = { failures: [] };
     do {
-      await runner.cycle();
+      lastCycle = await runner.cycle();
       if (options.once || stopping.requested) break;
       await sleep(config.runtime.pollSeconds * 1000);
     } while (!stopping.requested);
+    // --once 用于核对配置与授权：这一轮有仓库读不出来就必须以非零退出，不能静默成功。
+    if (options.once && lastCycle.failures.length > 0) {
+      logLine(config.runtime.stateDir, `接单退出（本轮读取失败：${lastCycle.failures.join(', ')}）`);
+      return 1;
+    }
     logLine(config.runtime.stateDir, '接单退出');
     return 0;
   } finally {

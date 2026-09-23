@@ -23,6 +23,7 @@ export function cleanup(path) {
 
 export function baseConfig({ root, repoDir, sourceDir, runnerId = 'mb01', overrides = {} } = {}) {
   const dir = repoDir ?? join(root, 'task-root');
+  // repoDir 是「部署者已备好的任务根目录」：它必须已经存在，工具不再代建。
   mkdirSync(dir, { recursive: true });
   const raw = {
     machineId: runnerId,

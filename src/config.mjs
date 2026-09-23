@@ -77,7 +77,8 @@ export function parseConfig(raw, { configPath, machineId, home = homedir() } = {
   const baseDir = configPath === undefined ? process.cwd() : dirname(resolve(configPath));
   if (!isPlainObject(raw)) fail('配置根节点必须是对象');
 
-  const machine = optionalString(raw.machineId, 'machineId') ?? optionalString(machineId, '--machine-id');
+  // 命令行/参数覆盖配置里的 machineId：帮助文本承诺 `--machine-id` 是覆盖，就必须优先。
+  const machine = optionalString(machineId, '--machine-id') ?? optionalString(raw.machineId, 'machineId');
   if (machine === undefined) {
     fail('缺少执行机标识：配置里写 machineId，或启动时给 --machine-id（可省 $env:COMPUTERNAME）');
   }

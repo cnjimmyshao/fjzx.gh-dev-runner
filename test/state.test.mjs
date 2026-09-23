@@ -149,18 +149,34 @@ test('给了 baseBranch 时 worktree 从该分支起', () => {
   ]);
 });
 
-test('只用 repoDir 的任务根目录会被准备好，不做 git 操作', async () => {
+test('只用 repoDir 的任务根目录直接使用，不做 git 操作', async () => {
   const root = makeTempDir();
   try {
     const repoDir = join(root, 'ready', 'project');
+    mkdirSync(repoDir, { recursive: true });
     const exec = async () => {
       throw new Error('不应调用 git');
     };
     const plan = await prepareWorkspace({ repository: { repo: 'o/p', repoDir }, issueNumber: 1, exec, existing: null });
     assert.equal(plan.ok, true);
     assert.equal(plan.dir, repoDir);
-    assert.equal(existsSync(repoDir), true);
     assert.equal(plan.worktreeCreated, false);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('repoDir 不存在时报错，不静默建空目录让 Harness 空跑', async () => {
+  const root = makeTempDir();
+  try {
+    const repoDir = join(root, 'typo', 'project');
+    const exec = async () => {
+      throw new Error('不应调用 git');
+    };
+    const plan = await prepareWorkspace({ repository: { repo: 'o/p', repoDir }, issueNumber: 1, exec, existing: null });
+    assert.equal(plan.ok, false);
+    assert.match(plan.reason, /repoDir 不存在或不是目录/);
+    assert.equal(existsSync(repoDir), false, '不创建目录');
   } finally {
     cleanup(root);
   }
