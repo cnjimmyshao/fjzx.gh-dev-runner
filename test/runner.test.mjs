@@ -310,6 +310,7 @@ test('重启恢复：已认领未结束的命令报结果不确定并保持绑�
   assert.equal(runs.length, 0, '恢复不自动重跑');
   const state = loadState(join(config.runtime.stateDir, 'state.json')).repositories['owner/project']['1'];
   assert.equal(state.commands[0].status, 'uncertain');
+  assert.equal(state.commands[0].retryable, false, '已有绑定：不重跑同一条命令');
   assert.equal(state.inFlight, false, '残留的执行中标记被清掉，下一次命令不会被当成忙碌');
   assert.equal(state.binding.sessionId, 'session-existing', '绑定保留，供下一条命令续接');
 
@@ -323,6 +324,47 @@ test('重启恢复：已认领未结束的命令报结果不确定并保持绑�
   assert.equal(runs[0].requestedSession, 'session-existing', '续接原会话');
   assert.equal(runs[0].cwd, dir, '仍在原工作目录');
   assert.equal(gh2.created.length, 1, '已报不确定的旧命令不重复回复');
+});
+
+test('重启恢复：上次停在准备阶段的命令会被重试一次，不被永久跳过', async (t) => {
+  const root = makeTempDir();
+  t.after(() => cleanup(root));
+  const { config } = baseConfig({ root });
+  mkdirSync(config.runtime.stateDir, { recursive: true });
+  writeFileSync(join(config.runtime.stateDir, 'state.json'), `${JSON.stringify({
+    version: 1,
+    repositories: {
+      'owner/project': {
+        1: {
+          seenSeq: 800,
+          inFlight: true,
+          binding: null,
+          commands: [{ id: 800, author: 'maintainer', status: 'claimed', at: 't0' }],
+        },
+      },
+    },
+  }, null, 2)}\n`, 'utf8');
+
+  const gh = makeGh({ issues: [issue(1, LABEL)] });
+  const { exec, runs } = makeHarnessExec();
+  const runner = createRunner({ config, gh, exec, log: () => {} });
+  await runner.recover();
+  assert.equal(runs.length, 0, '恢复本身不调用 Harness');
+  assert.equal(gh.created.length, 1, '回报结果不确定');
+  assert.match(gh.created[0].body, /会在下一轮检查时重试一次/);
+
+  // 下一轮：同一条评论仍然满足条件，应当被重试一次。
+  const gh2 = withComments(makeGh({ issues: [issue(1, LABEL)] }), {
+    'owner/project#1': [comment(800, '@dev')],
+  });
+  const runner2 = createRunner({ config, gh: gh2, exec, log: () => {} });
+  await runner2.cycle();
+  assert.equal(runs.length, 1, '同一条命令重试一次');
+  assert.equal(gh2.created.length, 1, '重试后回写正常接单');
+
+  // 再一轮不应重复：重试成功后该命令状态不再是 claimed。
+  await runner2.cycle();
+  assert.equal(runs.length, 1, '重试只发生一次');
 });
 
 test('状态文件损坏时明确失败，不覆盖原文件', async (t) => {

@@ -253,16 +253,20 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
     let claimed = null;
     for (const comment of selected) {
       const existing = findCommand(entry, comment.id);
-      if (existing !== null) {
+      if (existing !== null && existing.retryable !== true) {
         log(`跳过已处理命令 ${repository.repo}#${issue.number} comment=${comment.id} status=${existing.status}`);
         continue;
+      }
+      if (existing !== null) {
+        // 上次停在准备阶段、Harness 从未启动：恢复时已回报不确定，本轮按同一条评论重试一次。
+        log(`重试上次未真正开始的命令 ${repository.repo}#${issue.number} comment=${comment.id}`);
       }
       if (claimed !== null) {
         recordCommand(entry, { ...commandRef(comment), at: new Date().toISOString(), status: 'busy' });
         busy.push(comment);
         continue;
       }
-      recordCommand(entry, { ...commandRef(comment), at: new Date().toISOString(), status: 'claimed' });
+      recordCommand(entry, { ...commandRef(comment), at: new Date().toISOString(), status: 'claimed', retryable: false });
       entry.inFlight = true;
       claimed = comment;
     }
@@ -344,29 +348,42 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
     }
   }
 
-  /** 正常重启：上一轮「已认领未结束」的命令如实报为结果不确定，不自动重跑。 */
+  /**
+   * 正常重启：把上一轮「已认领未结束」的命令如实报为结果不确定。
+   *
+   * 有绑定说明上次调用真的开始过（或至少已准备好目录）：不重跑，等新指令按原目录续接。
+   * 没有绑定说明上次停在准备阶段、Harness 从未启动，没有任何开发工作发生过：允许受理时重试
+   * 同一条评论——否则这条已授权的命令会因为「已认领」而被永久跳过。
+   */
   async function recover() {
     for (const [repo, bucket] of Object.entries(state.repositories)) {
       for (const [number, entry] of Object.entries(bucket)) {
         const claimed = (entry.commands ?? []).filter((item) => item.status === 'claimed');
         if (claimed.length === 0) continue;
         const binding = entry.binding ?? null;
-        // inFlight 表示上次调用在进程存活期间进行过；残留标记必须清掉，否则下一次会被当忙碌。
-        const interrupted = entry.inFlight === true;
-        entry.inFlight = false;
+        const retryable = binding === null;
         for (const command of claimed) {
           command.status = 'uncertain';
           command.finishedAt = new Date().toISOString();
-          save();
+          command.retryable = retryable;
+        }
+        entry.inFlight = false; // 残留标记必须清掉，否则下一条命令会被当成忙碌。
+        if (retryable) {
+          // 进度回退到该评论之前，让它在下一轮检查里作为「新命令」被重新受理一次；
+          // 受理时只多认领这一条，其它已处理评论仍由状态里的记录挡住。
+          entry.seenSeq = Math.max(0, claimed[0].id - 1);
+        }
+        save();
+        for (const command of claimed) {
           await feedback({
             repo,
             issueNumber: Number(number),
             body: formatComment({
               kind: 'uncertain',
               binding,
-              detail: interrupted
-                ? `上一次调用（评论 ${command.id}）没有留下可判读的结束记录，程序在恢复时发现中断。绑定与工作目录保留，下一条新指令会按原目录继续。`
-                : `命令（评论 ${command.id}）已被登记但调用没有开始，程序在恢复时发现中断；本条不会重跑。`,
+              detail: retryable
+                ? `评论 ${command.id} 已登记但上次停在准备工作目录阶段、没有真正开始调用；本条会在下一轮检查时重试一次。`
+                : `上一次调用（评论 ${command.id}）没有留下可判读的结束记录，程序在恢复时发现中断。绑定与工作目录保留，请核对后另发一条新指令。`,
             }),
           });
         }
