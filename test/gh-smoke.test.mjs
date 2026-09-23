@@ -66,6 +66,39 @@ test('真实 gh：读取仓库 Open Issue 走分页 JSONL 并解析成结构', a
   }
 });
 
+test('真实 gh：评论跨多页时 JSONL 分页不丢不重、顺序正确', async (t) => {
+  const dir = makeTempDir('fjzx-issue9-gh-');
+  t.after(() => cleanup(dir));
+  // per_page 故意设很小，强制走多页；公开仓库的老 Issue 有十几条评论。
+  const gh = createGhClient({
+    capture: 'file',
+    pageSize: 3,
+    timeoutMs: 45000,
+    outputFiles: (label) => ({
+      stdoutFile: join(dir, `page-${label}.out`),
+      stderrFile: join(dir, `page-${label}.err`),
+    }),
+  });
+  let comments;
+  try {
+    comments = await gh.listComments({ repo: 'nodejs/node', issueNumber: 1 });
+  } catch (error) {
+    const reason = skipReason(error);
+    if (reason === null) throw error;
+    t.skip(reason);
+    return;
+  }
+  assert.ok(comments.length > 3, `需要跨页样本，实际只读到 ${comments.length} 条`);
+  const ids = comments.map((item) => item.id);
+  assert.equal(new Set(ids).size, ids.length, '跨页拼接后不出现重复评论');
+  assert.deepEqual(ids, [...ids].sort((left, right) => left - right), '跨页后仍按 id 升序（进度比较的前提）');
+  for (const comment of comments) {
+    assert.equal(typeof comment.body, 'string');
+    assert.equal(typeof comment.author, 'string');
+    assert.equal(typeof comment.id, 'number');
+  }
+});
+
 test('真实 gh：读取 Issue 评论并解析出 id/作者/链接', async (t) => {
   const dir = makeTempDir('fjzx-issue9-gh-');
   t.after(() => cleanup(dir));
