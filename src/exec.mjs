@@ -6,7 +6,7 @@
 //   受限环境同样可用。
 //   `capture: 'pipe'` 走 stdout/stderr 管道，适合要在终端实时看子进程输出的场合。
 
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { closeSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
@@ -30,6 +30,26 @@ function readIfPresent(path) {
     return readFileSync(path, 'utf8');
   } catch {
     return '';
+  }
+}
+
+/**
+ * 强制终止一棵进程树（尽力而为）。
+ *
+ * Harness 自己会再起子进程（工具调用、shell 等）；只杀直接子进程会留下仍在写文件的孤儿。
+ * Windows 用 `taskkill /T /F`；其他平台对进程组发 SIGKILL（spawn 时 detach 才能按组杀，
+ * 这里退化为杀直接子进程，行为与之前一致）。
+ */
+function killTree(pid) {
+  if (!Number.isInteger(pid)) return;
+  try {
+    if (process.platform === 'win32') {
+      execFileSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });
+    } else {
+      process.kill(pid, 'SIGKILL');
+    }
+  } catch {
+    // 进程可能已经退出：忽略即可，超时结果照常回报。
   }
 }
 
@@ -88,10 +108,14 @@ export function execFileAsync(options) {
     let stderr = '';
     let timedOut = false;
     let settled = false;
+    let graceTimer;
     const timer = timeoutMs > 0
       ? setTimeout(() => {
         timedOut = true;
+        // 硬超时不能只发一次可被忽略的终止信号：先请它退出，宽限期内没退就强制终止整棵进程树。
         child.kill();
+        graceTimer = setTimeout(() => killTree(child.pid), 5000);
+        graceTimer.unref?.();
       }, timeoutMs)
       : undefined;
     if (timer !== undefined) timer.unref?.();
@@ -105,6 +129,7 @@ export function execFileAsync(options) {
       if (settled) return;
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
+      if (graceTimer !== undefined) clearTimeout(graceTimer);
       fn(value);
     };
 

@@ -33,7 +33,11 @@ export function loadState(path) {
     if (error.code === 'ENOENT') return emptyState();
     throw new Error(`读取状态文件失败 ${path}：${error.message}`);
   }
-  if (text.trim() === '') return emptyState();
+  if (text.trim() === '') {
+    // 空文件不是「首次接入」：saveState 从不写空文件，文件存在却是空的说明被截断或改坏，
+    // 里面可能是全部会话绑定与评论进度，静默当成新状态会把它们丢掉。
+    throw new Error(`状态文件为空（${path}）：可能被截断或写入中断；请人工核对，程序不会覆盖它`);
+  }
   let parsed;
   try {
     parsed = JSON.parse(text);

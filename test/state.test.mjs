@@ -48,6 +48,21 @@ test('状态文件损坏或版本不符时明确失败', () => {
   }
 });
 
+test('状态文件存在但为空按损坏处理，不当成首次接入', () => {
+  const root = makeTempDir();
+  try {
+    const path = statePath(root);
+    mkdirSync(root, { recursive: true });
+    // saveState 从不写空文件：文件存在却是空的说明被截断，里面可能是全部绑定与进度。
+    writeFileSync(path, '', 'utf8');
+    assert.throws(() => loadState(path), /状态文件为空/);
+    writeFileSync(path, '   \n', 'utf8');
+    assert.throws(() => loadState(path), /状态文件为空/);
+  } finally {
+    cleanup(root);
+  }
+});
+
 test('同一评论 id 只保留一条命令记录', () => {
   const state = emptyState();
   const entry = issueState(state, 'owner/project', 1);

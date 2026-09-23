@@ -85,7 +85,8 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
 
   function entryFor(repo, issueNumber) {
     const bucket = (state.repositories[repo] ??= {});
-    return (bucket[String(issueNumber)] ??= { seenSeq: 0, commands: [], binding: null, lastRun: null });
+    // seenSeq: null 表示「还没扫描过这个 Issue」；0 是合法的已初始化值（当时没有任何评论）。
+    return (bucket[String(issueNumber)] ??= { seenSeq: null, commands: [], binding: null, lastRun: null });
   }
 
   function taskLogDir(repo, issueNumber) {
@@ -144,12 +145,19 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
     }
   }
 
+  /**
+   * 首次接入的进度基线：把当时已存在的评论登记为已看过，不重放历史命令。
+   *
+   * `seenSeq: null` 表示「该 Issue 还没被扫描过」；扫描过后即使是 `0`（尚无评论）也算已初始化。
+   * 早先版本用 `0` 兼作「未初始化」，导致一个尚无评论的 Issue 在首条评论恰好是命令时，把这
+   * 条命令当成基线吞掉——那是最常见的接入顺序（建 Issue → 发命令）。
+   */
   function baseline(entry, comments) {
-    if (typeof entry.seenSeq !== 'number' || entry.seenSeq === 0) {
+    if (entry.seenSeq === null || entry.seenSeq === undefined) {
       entry.seenSeq = comments.reduce((max, item) => Math.max(max, item.id), 0);
       save();
     }
-    return entry.seenSeq;
+    return entry.seenSeq ?? 0;
   }
 
   /**

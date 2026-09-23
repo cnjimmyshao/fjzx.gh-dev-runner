@@ -100,7 +100,13 @@ function logLine(stateDir, message) {
   }
 }
 
-export async function main(argv = process.argv.slice(2)) {
+/**
+ * @param {string[]} argv
+ * @param {object} [deps] 供测试注入的外部边界；缺省用真实实现。
+ * @param {object} [deps.gh] GitHub 客户端（缺省按配置建真实的 `gh` 客户端）
+ * @param {(options: object) => Promise<object>} [deps.exec] 子进程调用实现
+ */
+export async function main(argv = process.argv.slice(2), deps = {}) {
   const options = parseArgs(argv);
   if (options.help === true) {
     process.stdout.write(`${USAGE}\n`);
@@ -117,11 +123,11 @@ export async function main(argv = process.argv.slice(2)) {
   mkdirSync(config.runtime.stateDir, { recursive: true });
   const release = acquireLock(join(config.runtime.stateDir, 'runner.lock'));
 
-  // gh 客户端先建：它每次调用的临时输出文件用完即删（见 github.mjs），因此只用一个固定前缀，
-  // 不按调用序号堆积文件名。接单流程随后从它取用同一个客户端。
+  const exec = deps.exec ?? execFileAsync;
+  // gh 客户端每次调用的临时输出文件用完即删（见 github.mjs），因此只用一个固定前缀。
   const ghOutputDir = join(config.runtime.stateDir, 'tmp');
-  const gh = createGhClient({
-    exec: execFileAsync,
+  const gh = deps.gh ?? createGhClient({
+    exec,
     timeoutMs: config.github.timeoutMs,
     pageSize: config.github.pageSize,
     capture: config.runtime.capture,
@@ -130,7 +136,7 @@ export async function main(argv = process.argv.slice(2)) {
       stderrFile: join(ghOutputDir, `gh-${label}.err`),
     }),
   });
-  const runner = createRunner({ config, gh, exec: execFileAsync, log: (message) => logLine(config.runtime.stateDir, message) });
+  const runner = createRunner({ config, gh, exec, log: (message) => logLine(config.runtime.stateDir, message) });
 
   const stopping = { requested: false };
   const onSignal = (signal) => {

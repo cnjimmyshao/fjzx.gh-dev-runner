@@ -32,6 +32,28 @@ async function withNewCommand(ctx, command, history = [comment(100, 'x')]) {
   await ctx.runner.cycle();
 }
 
+test('尚无评论的 Issue：首条评论就是命令时必须接单', async (t) => {
+  const ctx = setup();
+  t.after(() => cleanup(ctx.root));
+
+  // 建 Issue → 立刻发命令是最常见的接入顺序：此时该 Issue 一条评论都没有，
+  // 扫描到的基线是 0，不能被当成「还没初始化」而把这条命令吞掉。
+  withComments(ctx.gh, { 'owner/project#1': [] });
+  await ctx.runner.cycle();
+  assert.equal(ctx.runs.length, 0, '空 Issue 的第一轮不启动');
+  assert.equal(entry(ctx).seenSeq, 0, '空 Issue 的基线是 0，且已初始化');
+
+  withComments(ctx.gh, { 'owner/project#1': [comment(100, '@dev')] });
+  await ctx.runner.cycle();
+  assert.equal(ctx.runs.length, 1, '首条评论恰好是命令时也要接单');
+  assert.equal(ctx.gh.created.length, 1);
+  assert.match(ctx.gh.created[0].body, /已接单：新建 Harness 会话/);
+
+  // 再跑一轮不应重复。
+  await ctx.runner.cycle();
+  assert.equal(ctx.runs.length, 1, '不重复执行');
+});
+
 test('首次接入把历史命令登记为已看过，不启动 Harness', async (t) => {
   const ctx = setup();
   t.after(() => cleanup(ctx.root));
