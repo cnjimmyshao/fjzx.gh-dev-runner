@@ -74,14 +74,23 @@ test('启动后的新命令建立独立目录与会话，第二条命令续接�
   assert.match(ctx.gh.created[1].body, /已接单：在该任务既有工作目录续接原 Harness 会话/);
 });
 
-test('公开回写只带任务目录名，不带本机绝对路径', async (t) => {
+test('公开回写不带任何本机路径信息，只给稳定任务标识', async (t) => {
   const ctx = setup();
   t.after(() => cleanup(ctx.root));
   await withNewCommand(ctx, comment(200, '@dev'));
   assert.equal(ctx.gh.created.length, 1);
-  assert.ok(!ctx.gh.created[0].body.includes(ctx.config.runtime.stateDir), '不公开状态目录');
-  assert.ok(!ctx.gh.created[0].body.includes(ctx.root), '不公开本机根路径');
-  assert.match(ctx.gh.created[0].body, /任务目录：`task-root`/);
+  const body = ctx.gh.created[0].body;
+  assert.ok(!body.includes(ctx.config.runtime.stateDir), '不公开状态目录');
+  assert.ok(!body.includes(ctx.root), '不公开本机根路径');
+  assert.ok(!body.includes('task-root'), '连目录名也不公开');
+  assert.match(body, /任务标识：`ws-[0-9a-f]{8}`/);
+
+  // 同一目录的标识稳定：下一条命令的回写用同一个值。
+  const first = body.match(/任务标识：`(ws-[0-9a-f]{8})`/)[1];
+  withComments(ctx.gh, { 'owner/project#1': [comment(200, '@dev'), comment(201, '@dev')] });
+  await ctx.runner.cycle();
+  const second = ctx.gh.created.at(-1).body.match(/任务标识：`(ws-[0-9a-f]{8})`/)[1];
+  assert.equal(second, first, '同一任务目录的公开标识保持稳定');
 });
 
 test('同一份进度不重复执行：下一轮不会重放已处理命令', async (t) => {

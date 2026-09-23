@@ -4,8 +4,9 @@
 // Finding、不代替维护者决定，也不重建提交与 Review 编排——那些由 Dev 在目标项目里按该
 // 项目规则完成。
 
+import { createHash } from 'node:crypto';
 import { mkdirSync, readdirSync, rmSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 
 import { buildTaskPrompt, collectCommands, commandRef } from './commands.mjs';
 import { HarnessError, runHarness } from './harness.mjs';
@@ -17,14 +18,15 @@ import { prepareWorkspace } from './workspace.mjs';
 /**
  * 接单结果 → 回写 Issue 的评论正文。一条命令只回一条，不每分钟刷评论。
  *
- * 公开评论只带非敏感的核对信息（执行机、会话标识、任务目录名）；本机绝对路径、模型输出、
- * 完整日志与凭据一律留在本机，按 Current「不公开本机敏感路径」的要求处理。
+ * 公开评论不带任何本机路径信息（连目录名也不带），只给执行机、会话标识与一个由目录派生的
+ * 稳定标识 `workspaceRef`；本机可用它在本机状态/日志里对齐同一条任务。模型输出、完整日志
+ * 与凭据一律留在本机，按 Current「不公开本机敏感路径」的要求处理。
  */
 export function formatComment({ kind, binding, detail }) {
   const who = `接单执行机 \`${binding?.runnerId ?? '(unknown)'}\``;
   const where = binding === null || binding === undefined
     ? ''
-    : `\n\n- 任务目录：\`${basename(binding.dir ?? '') || '(unknown)'}\`\n- 会话：\`${binding.sessionId ?? '(none)'}\``;
+    : `\n\n- 任务标识：\`${workspaceRef(binding.dir)}\`\n- 会话：\`${binding.sessionId ?? '(none)'}\``;
   const note = detail === undefined || detail === null || detail === '' ? '' : `\n\n原因：${detail}`;
   switch (kind) {
     case 'created':
@@ -48,6 +50,15 @@ export function formatComment({ kind, binding, detail }) {
 
 function timestampSlug(date = new Date()) {
   return date.toISOString().replace(/[:.]/g, '-');
+}
+
+/**
+ * 工作目录派生的稳定公开标识：同一目录每次得到同一个值，但不泄露路径本身（目录名也可能
+ * 是部署者的本机信息）。本机可用它在本机状态与日志里对齐任务。
+ */
+export function workspaceRef(dir) {
+  if (typeof dir !== 'string' || dir === '') return '(unknown)';
+  return `ws-${createHash('sha256').update(dir).digest('hex').slice(0, 8)}`;
 }
 
 /** 只保留最近若干轮调用日志，避免本机日志无限增长。 */
