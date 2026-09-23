@@ -319,8 +319,13 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
         log(`重试上次未真正开始的命令 ${repository.repo}#${issue.number} comment=${comment.id}`);
       }
       if (claimed !== null) {
-        recordCommand(entry, { ...commandRef(comment), at: new Date().toISOString(), status: 'busy' });
-        busy.push(comment);
+        // 同一批里已经有命令被认领：本条回复未启动。已经回复过的记录（进度回退时会被重新选中）
+        // 不再重复回复，但记录要保持原状。
+        const existingBusy = findCommand(entry, comment.id);
+        if (existingBusy === null) {
+          recordCommand(entry, { ...commandRef(comment), at: new Date().toISOString(), status: 'busy' });
+        }
+        if (existingBusy === null || existingBusy.feedbackSent !== true) busy.push(comment);
         continue;
       }
       recordCommand(entry, { ...commandRef(comment), at: new Date().toISOString(), status: 'claimed', retryable: false });
@@ -338,7 +343,10 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
         issueNumber: issue.number,
         body: formatComment({ kind: 'busy', binding: { runnerId: config.runnerId } }),
       });
+      // 记下「已经回复过未启动」：进度回退后这些评论会被重新选中，不能重复刷同一条回复。
+      recordCommand(entry, { ...commandRef(comment), status: 'busy', feedbackSent: true });
     }
+    if (busy.length > 0) save();
 
     for (const comment of edited) {
       await scopeFeedback({

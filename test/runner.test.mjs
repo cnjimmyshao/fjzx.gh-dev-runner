@@ -128,6 +128,48 @@ test('同一份进度不重复执行：下一轮不会重放已处理命令', as
   assert.equal(entry(ctx).commands.length, 1);
 });
 
+test('恢复回退进度后，曾被回复「未启动」的命令会被正常受理而不是再回一条', async (t) => {
+  const root = makeTempDir();
+  t.after(() => cleanup(root));
+  const { config } = baseConfig({ root });
+  const taskDir = join(root, 'task-root');
+  mkdirSync(config.runtime.stateDir, { recursive: true });
+  const history = [comment(10, '历史')];
+  // 状态：99 曾因「本轮已有调用」被回复过未启动，101 停在准备阶段（可重试）。恢复会把进度退到
+  // 101 之前，99 因此重新进入候选——此时槽位是空的，它应当被正常受理，而不是再回一条「未启动」。
+  writeFileSync(join(config.runtime.stateDir, 'state.json'), `${JSON.stringify({
+    version: 1,
+    repositories: {
+      'owner/project': {
+        1: {
+          seenSeq: 101,
+          binding: null,
+          commands: [
+            { id: 99, author: 'maintainer', status: 'busy', feedbackSent: true, at: 't0' },
+            { id: 101, author: 'maintainer', status: 'claimed', at: 't1' },
+          ],
+        },
+      },
+    },
+  }, null, 2)}\n`, 'utf8');
+
+  const gh = withComments(makeGh({ issues: [issue(1, LABEL)] }), {
+    'owner/project#1': [...history, comment(99, '@dev'), comment(101, '@dev')],
+  });
+  const { exec, runs } = makeHarnessExec();
+  const logs = [];
+  const runner = createRunner({ config, gh, exec, log: (m) => logs.push(m) });
+  await runner.recover();
+  await runner.cycle();
+
+  const busyReplies = gh.created.filter((item) => /执行中，本条未启动/.test(item.body));
+  assert.equal(busyReplies.length, 0, '不再重复回复「未启动」');
+  assert.equal(runs.length, 1, '释放出来的槽位按恢复顺序受理一条');
+  assert.match(gh.created.at(-1).body, /已接单：新建 Harness 会话/);
+  const state = loadState(join(config.runtime.stateDir, 'state.json')).repositories['owner/project']['1'];
+  assert.equal(state.commands.find((item) => item.id === 99).feedbackSent, true, '已回复标记保留');
+});
+
 test('同一轮多条新命令只执行一条，另一条明确回复未启动', async (t) => {
   const ctx = setup();
   t.after(() => cleanup(ctx.root));
