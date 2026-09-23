@@ -93,6 +93,27 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
   }
 
   /**
+   * 工作目录归属核对：一个工作目录只能服务一个任务。
+   *
+   * `sourceDir` 模式下每个 Issue 有独立的 git worktree，天然隔离；但只配了 `repoDir` 时所有 Issue
+   * 都会落到同一个目录——那等于两个任务在同一份检出上并行开发，会互相覆盖未提交的工作。这里按绑定
+   * 记录拦住这种情况并如实报告，而不是等到现场才发现。
+   */
+  function workspaceConflict(repository, issueNumber) {
+    const bucket = state.repositories[repository.repo] ?? {};
+    for (const [otherNumber, other] of Object.entries(bucket)) {
+      if (Number(otherNumber) === Number(issueNumber)) continue;
+      const dir = other?.binding?.dir;
+      if (dir === undefined || dir === null) continue;
+      if (repository.sourceDir === undefined && dir === repository.repoDir) {
+        return `工作目录 ${dir} 已被同一仓库的 Issue #${otherNumber} 占用。只配 repoDir 时该仓库的多个任务会共用同一目录，`
+          + '请在配置里改用 sourceDir（每个任务一个独立 git worktree）或为任务分别准备目录。';
+      }
+    }
+    return null;
+  }
+
+  /**
    * 子进程输出落盘位置。`capture: 'pipe'` 时不需要，返回 undefined 让 exec 走管道。
    */
   function execFiles(runDir, label) {
@@ -151,6 +172,12 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
   async function execute({ repository, issue, command }) {
     const repo = repository.repo;
     const entry = entryFor(repo, issue.number);
+    const conflict = workspaceConflict(repository, issue.number);
+    if (conflict !== null) {
+      log(`未启动 ${repo}#${issue.number}：${conflict}`);
+      await feedback({ repo, issueNumber: issue.number, body: formatComment({ kind: 'scope', detail: conflict }) });
+      return { kind: 'scope', detail: conflict };
+    }
     // 每轮调用的输出落在同一个 runDir：git、Harness 与本机错误原因都可回查。
     const runDir = newRunDir(repo, issue.number, command.id);
     const plan = await planTask({ repository, issueNumber: issue.number, entry, runDir });
