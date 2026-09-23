@@ -71,13 +71,20 @@ function handle(line) {
     return;
   }
   if (message.method === 'session/request_permission') {
-    // 默认拒绝：探针只投递文本、只读回结果，不应让被投递的任务获得执行许可。
-    // 需要观察工具调用时才设 PROBE_ALLOW_TOOLS=1 显式选择一次性批准。
+    // 默认拒绝（ACP v1 的 cancel 结果）：探针只投递文本、只读回结果，
+    // 不应让被投递的任务获得执行许可。需要观察工具调用时才设
+    // PROBE_ALLOW_TOOLS=1 显式选择一次性批准。
     if ((process.env.PROBE_ALLOW_TOOLS ?? '') === '') {
       send({ jsonrpc: '2.0', id: message.id, result: { outcome: { outcome: 'cancelled' } } });
       return;
     }
-    send({ jsonrpc: '2.0', id: message.id, result: { outcome: { outcome: 'selected', optionId: 'allow_once' } } });
+    const options = message.params?.options ?? [];
+    const allow = options.find((option) => option.kind === 'allow_once') ?? options.find((option) => option.optionId === 'allow_once') ?? options[0];
+    if (allow === undefined) {
+      send({ jsonrpc: '2.0', id: message.id, result: { outcome: { outcome: 'cancelled' } } });
+      return;
+    }
+    send({ jsonrpc: '2.0', id: message.id, result: { outcome: { outcome: 'selected', optionId: allow.optionId } } });
     return;
   }
   if (message.id !== undefined) {
