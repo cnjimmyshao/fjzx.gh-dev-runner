@@ -99,12 +99,13 @@ test('首次任务按 sourceDir 建独立 worktree，失败时不留半成品目
   try {
     const repository = { repo: 'owner/project', sourceDir: join(root, 'src'), worktreeDir: join(root, 'ws') };
     const calls = [];
+    const files = { stdoutFile: join(root, 'git.out'), stderrFile: join(root, 'git.err') };
     const okExec = async (options) => {
       calls.push(options);
       mkdirSync(worktreePath(repository, 9), { recursive: true });
       return { exitCode: 0, stdout: '', stderr: '' };
     };
-    const plan = await prepareWorkspace({ repository, issueNumber: 9, exec: okExec, existing: null });
+    const plan = await prepareWorkspace({ repository, issueNumber: 9, exec: okExec, existing: null, files });
     assert.equal(plan.ok, true);
     assert.equal(plan.dir, worktreePath(repository, 9));
     assert.equal(plan.branch, 'fjzx/issue-9');
@@ -114,12 +115,28 @@ test('首次任务按 sourceDir 建独立 worktree，失败时不留半成品目
     assert.deepEqual(calls[0].args, worktreeArgs({ repository, issueNumber: 9, path: worktreePath(repository, 9) }));
     assert.ok(calls[0].args.includes('-b') && calls[0].args.includes('fjzx/issue-9'));
     assert.equal(calls[0].args.at(-1), worktreePath(repository, 9), 'baseBranch 缺省时从 sourceDir 当前 HEAD 起');
+    assert.deepEqual(calls[0].stdoutFile, files.stdoutFile, 'git 输出走调用方给的文件，不用默认参数');
 
     const failExec = async () => ({ exitCode: 128, stdout: '', stderr: 'fatal: not a git repository' });
-    const failed = await prepareWorkspace({ repository, issueNumber: 10, exec: failExec, existing: null });
+    const failed = await prepareWorkspace({ repository, issueNumber: 10, exec: failExec, existing: null, files });
     assert.equal(failed.ok, false);
     assert.match(failed.reason, /创建 git worktree 失败/);
     assert.equal(existsSync(worktreePath(repository, 10)), false, '失败时清理空目录，交给人工核对');
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('缺省 capture=file 但没给输出文件时，按用法错误报出而不是让真实 exec 抛错', async () => {
+  const root = makeTempDir();
+  try {
+    const repository = { repo: 'owner/project', sourceDir: join(root, 'src'), worktreeDir: join(root, 'ws') };
+    const exec = async () => {
+      throw new Error('真实 exec 会在这里拒绝执行：capture=file 需要同时给出 stdoutFile 与 stderrFile');
+    };
+    const plan = await prepareWorkspace({ repository, issueNumber: 1, exec, existing: null });
+    assert.equal(plan.ok, false);
+    assert.match(plan.reason, /缺少输出文件路径/);
   } finally {
     cleanup(root);
   }

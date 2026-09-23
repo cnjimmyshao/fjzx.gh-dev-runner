@@ -2,8 +2,10 @@ import { strict as assert } from 'node:assert';
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
+import { loadConfig } from '../src/config.mjs';
 import { execFileAsync } from '../src/exec.mjs';
 import { runHarness } from '../src/harness.mjs';
 import { cleanup, makeTempDir } from './helpers.mjs';
@@ -19,9 +21,12 @@ import { cleanup, makeTempDir } from './helpers.mjs';
  * 找不到 dsh 安装、或环境不允许启动子进程时跳过（跳过 ≠ 通过）。绝不安装或升级任何东西，
  * 也不触碰正在运行的 `dsh web`：使用独立的临时 DSH_HOME 与独立工作目录。
  */
-function findDshBin() {
-  const fromEnv = process.env.FJZX_DSH_BIN;
-  if (typeof fromEnv === 'string' && fromEnv !== '' && existsSync(fromEnv)) return fromEnv;
+function findDshBin(configured) {
+  if (typeof process.env.FJZX_DSH_BIN === 'string' && existsSync(process.env.FJZX_DSH_BIN)) {
+    return process.env.FJZX_DSH_BIN;
+  }
+  // 优先用部署配置里实际使用的入口；没有配置时才退回 npm 缓存里找到的第一个安装。
+  if (typeof configured === 'string' && existsSync(configured)) return configured;
   const roots = [
     join(process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'), 'npm-cache', '_npx'),
     join(homedir(), '.npm', '_npx'),
@@ -37,15 +42,27 @@ function findDshBin() {
   return null;
 }
 
-test('真实 Harness：续接不存在的会话失败退出，且不静默新建会话', async (t) => {
-  const bin = findDshBin();
-  if (bin === null) {
-    t.skip('本机找不到 dsh 安装（可用 FJZX_DSH_BIN 指定 lib/bin.js）');
-    return;
+/** 配置文件里写的 harness.bin（若本机已有），用于优先核对被部署的那一版。 */
+function dshBinFromConfig() {
+  let configured;
+  try {
+    configured = loadConfig({}).harness.bin;
+  } catch {
+    return null;
   }
-  const patch = join(process.cwd(), 'scripts', 'headless-session', 'overlay.yml');
+  return typeof configured === 'string' && existsSync(configured) ? configured : null;
+}
+
+test('真实 Harness：续接不存在的会话失败退出，且不静默新建会话', async (t) => {
+  // overlay 按本文件位置解析，不依赖调用方的当前工作目录。
+  const patch = join(fileURLToPath(new URL('..', import.meta.url)), 'scripts', 'headless-session', 'overlay.yml');
   if (!existsSync(patch)) {
     t.skip(`找不到 overlay：${patch}`);
+    return;
+  }
+  const bin = findDshBin(dshBinFromConfig());
+  if (bin === null) {
+    t.skip('本机找不到 dsh 安装（可用 FJZX_DSH_BIN 指定 lib/bin.js，或先写好本机 config）');
     return;
   }
 

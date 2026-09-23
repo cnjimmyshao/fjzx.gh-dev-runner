@@ -26,7 +26,7 @@ export function formatComment({ kind, binding, detail }) {
   const who = `接单执行机 \`${binding?.runnerId ?? '(unknown)'}\``;
   const where = binding === null || binding === undefined
     ? ''
-    : `\n\n- 任务标识：\`${workspaceRef(binding.dir)}\`\n- 会话：\`${binding.sessionId ?? '(none)'}\``;
+    : `\n\n- 任务标识：\`${binding.workspaceRef ?? workspaceRef(binding.dir)}\`\n- 会话：\`${binding.sessionId ?? '(none)'}\``;
   const note = detail === undefined || detail === null || detail === '' ? '' : `\n\n原因：${detail}`;
   switch (kind) {
     case 'created':
@@ -171,6 +171,9 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
       source: plan.source,
       worktreeCreated: plan.worktreeCreated,
     });
+    // 公开评论里用的稳定任务标识一并落盘：本机可以直接用它在 state/日志里对齐任务，
+    // 不必自己重算哈希（也算给公开评论与本地记录留了一条可核对的线索）。
+    binding.workspaceRef = workspaceRef(plan.dir);
     entry.binding = binding;
     const detail = interruptedBeforeSession
       ? '上一次调用在取得会话标识前中断；本轮在同一工作目录新建会话。'
@@ -226,16 +229,17 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
     };
     save();
     pruneRunLogs(taskLogDir(repo, issue.number), runtime.keepRunLogs);
-    log(`${repo}#${issue.number} 回合结束 exit=${outcome.exitCode} status=${outcome.statusKind ?? '(none)'} session=${binding.sessionId ?? '(none)'}`);
+    log(`${repo}#${issue.number} 回合结束 exit=${outcome.exitCode} status=${outcome.statusKind ?? '(none)'} session=${binding.sessionId ?? '(none)'}${outcome.detail === '' ? '' : ` detail=${outcome.detail}`}`);
     if (!completed) {
       // CLI 执行失败／被中止也是调用结果的一部分：在 Issue 上留一条可读原因，避免停在「已接单」。
+      // 公开只用结构化原因（错误码/消息、退出码、状态），stdout/stderr 摘要留在本机日志。
       await feedback({
         repo,
         issueNumber: issue.number,
         body: formatComment({
           kind: 'turn-failed',
           binding,
-          detail: `退出码 ${outcome.exitCode}，回合状态 ${outcome.statusKind ?? '(unknown)'}${outcome.detail === '' ? '' : `；${outcome.detail}`}`,
+          detail: `回合状态 ${outcome.statusKind ?? '(unknown)'}；${outcome.reason}`,
         }),
       });
     }
@@ -284,32 +288,38 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
     entry.seenSeq = newestSeq;
     save();
 
-    for (const comment of edited) {
-      log(`忽略被编辑过的评论 ${repository.repo}#${issue.number} comment=${comment.id}`);
+    // 「本条未启动」的回复必须在调用开始之前发出：调用可能持续到 harness.timeoutMs，期间进程
+    // 被杀会让这些回复永久丢失，而它们的记录已经落盘、恢复后不会被当成新命令而补发。
+    for (const comment of busy) {
       await feedback({
         repo: repository.repo,
         issueNumber: issue.number,
-        body: formatComment({
-          kind: 'scope',
-          detail: `评论 ${comment.url ?? comment.id} 已被编辑；首版只接受新发布的独立命令评论，本条未启动。`,
-        }),
+        body: formatComment({ kind: 'busy', binding: { runnerId: config.runnerId } }),
+      });
+    }
+
+    for (const comment of edited) {
+      await scopeFeedback({
+        entry,
+        repo: repository.repo,
+        issueNumber: issue.number,
+        comment,
+        detail: `评论 ${comment.url ?? comment.id} 已被编辑；首版只接受新发布的独立命令评论，本条未启动。`,
       });
     }
 
     for (const comment of ignored) {
       log(`忽略未授权命令 ${repository.repo}#${issue.number} comment=${comment.id} author=${comment.author}`);
-      await feedback({
+      await scopeFeedback({
+        entry,
         repo: repository.repo,
         issueNumber: issue.number,
-        body: formatComment({
-          kind: 'scope',
-          detail: `评论 ${comment.url ?? comment.id} 的作者 @${comment.author} 不在该仓库的 allowedActors 内。`,
-        }),
+        comment,
+        detail: `评论 ${comment.url ?? comment.id} 的作者 @${comment.author} 不在该仓库的 allowedActors 内。`,
       });
     }
 
     if (claimed !== null) {
-      // 先执行被认领的命令：它对应「已接单」这条反馈，先于其余命令的「未启动」回复出现在 Issue 上。
       const ref = commandRef(claimed);
       const result = await execute({ repository, issue, command: ref });
       entry.inFlight = false;
@@ -321,11 +331,20 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
       save();
     }
 
-    for (const comment of busy) {
-      await feedback({ repo: repository.repo, issueNumber: issue.number, body: formatComment({ kind: 'busy' }) });
-    }
-
     return entry;
+  }
+
+  /**
+   * 「本条未启动」类回复只发一次：恢复时若回退了进度水位，这一批评论可能被重新选中，靠记录上的
+   * feedbackSent 标记避免同一条评论被重复回复。
+   */
+  async function scopeFeedback({ entry, repo, issueNumber, comment, detail }) {
+    const record = findCommand(entry, comment.id);
+    if (record !== null && record.feedbackSent === true) return;
+    recordCommand(entry, { ...commandRef(comment), at: new Date().toISOString(), status: 'scope', feedbackSent: true });
+    save();
+    log(`未启动 ${repo}#${issueNumber} comment=${comment.id}`);
+    await feedback({ repo, issueNumber, body: formatComment({ kind: 'scope', detail }) });
   }
 
   async function runRepository(repository) {

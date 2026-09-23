@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert';
+import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -23,6 +24,20 @@ function client(dir) {
     }),
   });
 }
+
+test('真实 gh：临时输出文件读完即删，不随轮询堆积', async (t) => {
+  const dir = makeTempDir('fjzx-issue9-gh-');
+  t.after(() => cleanup(dir));
+  try {
+    await client(dir).listComments({ repo: REPO, issueNumber: 9 });
+  } catch (error) {
+    const reason = skipReason(error);
+    if (reason === null) throw error;
+    t.skip(reason);
+    return;
+  }
+  assert.deepEqual(readdirSync(dir), [], '本次调用的临时输出文件已经删掉');
+});
 
 function skipReason(error) {
   if (!(error instanceof GhError)) return null;

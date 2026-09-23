@@ -106,6 +106,8 @@ test('结果判读区分完成、回合错误、非零退出与不可判读', ()
     assert.equal(failed.statusKind, 'error');
     assert.equal(failed.errorCode, 'MISSING_CREDENTIAL');
     assert.match(failed.detail, /no API key/);
+    assert.match(failed.reason, /MISSING_CREDENTIAL/);
+    assert.match(failed.reason, /退出码 1/);
 
     writeFileSync(resultPath, '{ 坏 JSON', 'utf8');
     const broken = readResult({ resultPath, exitCode: 0, stdout: '{"sessionId":"x"}\n', stderr: '' });
@@ -122,8 +124,38 @@ test('结果判读区分完成、回合错误、非零退出与不可判读', ()
       stdout: '',
       stderr: 'error: a task is required',
     });
-    assert.match(missing.detail, /a task is required/, '没有结果文件时用 stderr 作为失败摘要');
+    assert.match(missing.detail, /a task is required/, '没有结果文件时用 stderr 作为本机失败摘要');
     assert.equal(missing.statusKind, null);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('公开原因不含 stdout/stderr 片段，模型输出只进本机 detail', () => {
+  const root = makeTempDir();
+  try {
+    const resultPath = join(root, 'result.json');
+    // 情形 1：结果文件缺失但 stdout 有 result JSON（会带出模型最终回答文本）
+    const fromStdout = readResult({
+      resultPath,
+      exitCode: 0,
+      stdout: '{"sessionId":"s","status":{"kind":"completed"},"text":"TOP-SECRET-ANSWER"}\n',
+      stderr: '',
+    });
+    assert.match(fromStdout.detail, /TOP-SECRET-ANSWER/, '本机 detail 保留带上下文的摘要');
+    assert.ok(!fromStdout.reason.includes('TOP-SECRET-ANSWER'), `公开原因不得带模型输出：${fromStdout.reason}`);
+
+    // 情形 2：回合 aborted 且没有 status.error —— 旧实现会把 stderr（含 reasoning）公开出去
+    writeFileSync(resultPath, `${JSON.stringify({ sessionId: 's', status: { kind: 'aborted' } })}\n`, 'utf8');
+    const aborted = readResult({
+      resultPath,
+      exitCode: 1,
+      stdout: '',
+      stderr: 'dsh: reasoning:\nTOP-SECRET-THOUGHT-1234\n',
+    });
+    assert.match(aborted.detail, /TOP-SECRET-THOUGHT/, '本机 detail 保留 stderr 摘要');
+    assert.ok(!aborted.reason.includes('TOP-SECRET-THOUGHT'), `公开原因不得带 reasoning：${aborted.reason}`);
+    assert.match(aborted.reason, /退出码 1/);
   } finally {
     cleanup(root);
   }

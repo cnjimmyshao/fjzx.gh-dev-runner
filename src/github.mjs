@@ -5,6 +5,8 @@
 // 对象」的 JSONL，因此分页不需要在客户端重组数组。评论正文是外部输入，只作为数据解析
 // 或任务上下文文本，不拼成 shell 命令。
 
+import { rmSync } from 'node:fs';
+
 import { execFileAsync, ExecError } from './exec.mjs';
 
 export class GhError extends Error {
@@ -101,6 +103,16 @@ export function createGhClient({
     } catch (error) {
       if (error instanceof ExecError) throw new GhError(`${command} 调用失败：${error.message}`);
       throw error;
+    } finally {
+      // exec 已经把输出读进内存（字符串）：临时文件用完即删，避免每次轮询都在状态目录里堆积。
+      for (const path of [files.stdoutFile, files.stderrFile]) {
+        if (path === undefined) continue;
+        try {
+          rmSync(path, { force: true });
+        } catch {
+          // 删不掉不影响本次读取结果，留给运维清理。
+        }
+      }
     }
   }
 

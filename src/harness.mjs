@@ -16,7 +16,14 @@ export class HarnessError extends Error {
   }
 }
 
-/** 退出码 0 只代表本轮 turn 以 completed 结束；业务完成仍由 Dev 自己报告。 */
+/**
+ * 退出码 0 只代表本轮 turn 以 completed 结束；业务完成仍由 Dev 自己报告。
+ *
+ * 返回值里有两个「原因」，用途不同、不要混用：
+ * - `reason`：可安全公开的结构化原因（错误码/消息、退出码、状态）。**不含** stdout/stderr 片段。
+ * - `detail`：本机排查用的原因，会在结构化原因缺失时退化为 stdout/stderr 摘要——stderr 里可能
+ *   有模型 reasoning 文本，因此只允许进本机日志，不得写进公开评论。
+ */
 export function readResult({ resultPath, exitCode, stdout, stderr }) {
   let parsed = null;
   let parseError = null;
@@ -31,14 +38,27 @@ export function readResult({ resultPath, exitCode, stdout, stderr }) {
     ? (stdout.trim().split(/\r?\n/).find((line) => line.trim() !== '') ?? '')
     : '';
   const status = parsed?.status ?? null;
-  const errorMessage = status?.error?.message ?? (parseError ?? '');
+  const statusError = status?.error ?? null;
+  const errorMessage = typeof statusError?.message === 'string' ? statusError.message : '';
+  const localDetail = [
+    errorMessage,
+    parseError ?? '',
+    summary,
+    stderr.trim().slice(0, 300),
+  ].find((item) => item !== '') ?? '';
+  const publicReason = [
+    typeof statusError?.code === 'string' && statusError.code !== '' ? `错误码 ${statusError.code}` : '',
+    errorMessage,
+    `退出码 ${exitCode}`,
+  ].filter((item) => item !== '').join('；');
   return {
     exitCode,
     sessionId: typeof parsed?.sessionId === 'string' && parsed.sessionId !== '' ? parsed.sessionId : null,
     continueReason: typeof parsed?.continueReason === 'string' ? parsed.continueReason : null,
     statusKind: typeof status?.kind === 'string' ? status.kind : null,
-    errorCode: status?.error?.code ?? null,
-    detail: errorMessage === '' ? (summary === '' ? stderr.trim().slice(0, 300) : summary.slice(0, 300)) : errorMessage,
+    errorCode: typeof statusError?.code === 'string' ? statusError.code : null,
+    reason: publicReason,
+    detail: localDetail,
   };
 }
 

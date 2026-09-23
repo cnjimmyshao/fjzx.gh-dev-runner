@@ -117,8 +117,9 @@ test('同一轮多条新命令只执行一条，另一条明确回复未启动',
   await ctx.runner.cycle();
   assert.equal(ctx.runs.length, 1, '一条命令一次调用，不叠加第二个写入者');
   assert.equal(ctx.gh.created.length, 2, '执行一条并回复另一条');
-  assert.match(ctx.gh.created[0].body, /已接单：新建 Harness 会话/, '先回被执行的命令');
-  assert.match(ctx.gh.created[1].body, /执行中，本条未启动；结束后重新发指令。/);
+  // 「本条未启动」先发：调用可能长达 harness.timeoutMs，中途被杀会让这条回复永久丢失。
+  assert.match(ctx.gh.created[0].body, /执行中，本条未启动；结束后重新发指令。/);
+  assert.match(ctx.gh.created[1].body, /已接单：新建 Harness 会话/);
   assert.equal(entry(ctx).commands.find((item) => item.id === 401).status, 'busy');
 
   await ctx.runner.cycle();

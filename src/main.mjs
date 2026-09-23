@@ -55,10 +55,17 @@ export function acquireLock(lockPath) {
       if (error.code !== 'EEXIST') throw new ConfigError(`无法创建实例锁 ${lockPath}：${error.message}`);
     }
     const owner = readLockOwner(lockPath);
-    if (owner !== null && owner !== process.pid && processAlive(owner)) {
+    if (owner === null) {
+      // 读不出 pid：可能刚好读到另一个进程 create→write 之间的空锁。这种情况不能当作陈旧锁删除
+      // （会把锁抢走导致双写），也不能无限等；直接拒绝启动，由人确认后清理。
+      throw new ConfigError(
+        `实例锁 ${lockPath} 存在但读不出持有进程（可能正被另一个进程创建）。请稍后重试；确认没有接单进程在运行时删除该文件。`,
+      );
+    }
+    if (owner !== process.pid && processAlive(owner)) {
       throw new ConfigError(`已有接单进程在运行（pid ${owner}，锁 ${lockPath}）；不启动第二个写入者`);
     }
-    // 陈旧锁（持有进程已不在或锁文件读不出 pid）：清掉后重试一次独占创建。
+    // 陈旧锁（持有进程已不存在，例如被强杀）：清掉后重试一次独占创建。
     rmSync(lockPath, { force: true });
   }
   throw new ConfigError(`实例锁被反复占用，无法启动：${lockPath}`);
@@ -110,24 +117,20 @@ export async function main(argv = process.argv.slice(2)) {
   mkdirSync(config.runtime.stateDir, { recursive: true });
   const release = acquireLock(join(config.runtime.stateDir, 'runner.lock'));
 
-  const exec = execFileAsync;
-  const ghTempDir = join(config.runtime.stateDir, 'tmp');
-  let ghCallSeq = 0;
+  // gh 客户端先建：它每次调用的临时输出文件用完即删（见 github.mjs），因此只用一个固定前缀，
+  // 不按调用序号堆积文件名。接单流程随后从它取用同一个客户端。
+  const ghOutputDir = join(config.runtime.stateDir, 'tmp');
   const gh = createGhClient({
-    exec,
+    exec: execFileAsync,
     timeoutMs: config.github.timeoutMs,
     pageSize: config.github.pageSize,
     capture: config.runtime.capture,
-    outputFiles: (label) => {
-      ghCallSeq += 1;
-      const stem = `${Date.now()}-${ghCallSeq}-${label}`;
-      return {
-        stdoutFile: join(ghTempDir, `${stem}.out`),
-        stderrFile: join(ghTempDir, `${stem}.err`),
-      };
-    },
+    outputFiles: (label) => ({
+      stdoutFile: join(ghOutputDir, `gh-${label}.out`),
+      stderrFile: join(ghOutputDir, `gh-${label}.err`),
+    }),
   });
-  const runner = createRunner({ config, gh, exec, log: (message) => logLine(config.runtime.stateDir, message) });
+  const runner = createRunner({ config, gh, exec: execFileAsync, log: (message) => logLine(config.runtime.stateDir, message) });
 
   const stopping = { requested: false };
   const onSignal = (signal) => {

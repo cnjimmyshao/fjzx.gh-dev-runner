@@ -27,17 +27,23 @@ function isDirectory(path) {
 }
 
 /**
- * git 调用的输出捕获与其它子进程一致：缺省把结果落到给定文件，调用结束后读回；
- * 只要退出码与 stderr 摘要，因此文件用完即不再需要。
+ * git 调用的输出捕获与其它子进程一致：把结果落到给定文件，调用结束后读回；只要退出码与
+ * stderr 摘要，因此文件用完即不再需要。
+ *
+ * 缺省 `capture` 用 `file` 时**必须**同时给出 `files`，否则真实 exec 会拒绝执行；
+ * 与其在运行期才发现，不如在这里按用法错误报出来。
  */
-async function gitSucceeded(exec, args, { capture, files }) {
+async function gitSucceeded(exec, args, { capture = 'file', files } = {}) {
+  if (capture === 'file' && files === undefined) {
+    return { ok: false, message: 'git 调用缺少输出文件路径（capture=file 需要 files）' };
+  }
   try {
     const result = await exec({
       command: 'git',
       args,
       timeoutMs: 120000,
       capture,
-      ...(files === undefined ? {} : files),
+      ...(files ?? {}),
     });
     if (result.exitCode === 0) return { ok: true };
     const message = (result.stderr ?? '').trim().split(/\r?\n/)[0] ?? '';
@@ -48,6 +54,9 @@ async function gitSucceeded(exec, args, { capture, files }) {
 }
 
 /**
+ * @param {object} options
+ * @param {'file'|'pipe'} [options.capture] 传给 exec 的输出捕获方式
+ * @param {{stdoutFile: string, stderrFile: string}} [options.files] capture=file 时必填
  * @returns {Promise<{ok: true, dir: string, branch: string|null, source: string|null, worktreeCreated: boolean}
  *   | {ok: false, reason: string}>}
  */
