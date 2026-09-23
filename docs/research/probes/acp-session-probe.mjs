@@ -14,6 +14,7 @@
 // 输出一行 JSON：mode、sessionId、stopReason、answer、updates。
 // 失败时向 stderr 打印 JSON-RPC 错误并退出 1；超时退出 3。
 // 探针只投递文本、只读回结果，不写业务文件；会话持久化在 $DSH_HOME 下。
+// 权限请求默认拒绝，只有显式设置 PROBE_ALLOW_TOOLS=1 才一次性批准。
 
 import { spawn } from 'node:child_process';
 
@@ -70,7 +71,12 @@ function handle(line) {
     return;
   }
   if (message.method === 'session/request_permission') {
-    // 受信任的测试控制方：一次性批准，避免意外工具调用把探针挂住。
+    // 默认拒绝：探针只投递文本、只读回结果，不应让被投递的任务获得执行许可。
+    // 需要观察工具调用时才设 PROBE_ALLOW_TOOLS=1 显式选择一次性批准。
+    if ((process.env.PROBE_ALLOW_TOOLS ?? '') === '') {
+      send({ jsonrpc: '2.0', id: message.id, result: { outcome: { outcome: 'cancelled' } } });
+      return;
+    }
     send({ jsonrpc: '2.0', id: message.id, result: { outcome: { outcome: 'selected', optionId: 'allow_once' } } });
     return;
   }

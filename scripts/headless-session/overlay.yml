@@ -1,0 +1,17 @@
+# 把 scripts/headless-session/runner.mjs 作为本地 runner 挂到随附的 headless profile：
+# 停用该 bundle 自带的 startup 与 runner，插入按 DSH_SESSION_ID 续接的 runner。
+#
+# 行 id 来自 @deepseek-ai/dsh-headless 的 cordis.patch.yml；升级该 bundle 后需重新核对。
+- id: headless-startup
+  disabled: true
+
+- id: headless-runner
+  disabled: true
+
+- insert:
+    - id: headless-session-runner
+      name: ./runner.mjs
+      config:
+        task: !!js process.env.DSH_TASK
+        sessionId: !!js process.env.DSH_SESSION_ID
+        resultFile: !!js process.env.DSH_RESULT_FILE

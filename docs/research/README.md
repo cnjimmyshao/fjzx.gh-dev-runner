@@ -12,10 +12,10 @@
 
 报告：
 
-- [本机 Harness CLI 首轮执行与同会话续接验证](2026-09-23-local-harness-cli-first-run-and-resume.md)：本机 0.1.5-rc.2 的 headless 单轮执行可用，但该版本无 `--session-id` / `--json`，同版本 `acp` stdio 界面已实测跨进程续接会话；首版调用界面待维护者决定。
+- [本机 Harness CLI 首轮执行与同会话续接验证](2026-09-23-local-harness-cli-first-run-and-resume.md)：本机 0.1.5-rc.2 的 headless 单轮执行可用，但该版本自身无 `--session-id` / `--json`；用 profile patch 挂本地 runner 后已实测跨进程续接，脚本在 `scripts/headless-session/`。
 
 原 Web 接入实验未并入本分支，其报告留在 [PR #4](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/pull/4) 与 Issue #3 供追溯，保留其时间点证据，不作为 CLI 已验证的依据。
 
-当前执行方向为 Harness headless CLI；首轮执行、进程退出后同会话续接及输出／失败信号的本机实测结果见上述 CLI 报告，后续调用界面与版本前提待维护者决定，见 [开发说明](../development.md)。既有 Web 接入实验不能视为 CLI 已验证；不同接入方式的报告分别记录，不因方案调整而抹去原实验。
+当前执行方向为 Harness headless CLI；首轮执行、进程退出后同会话续接及输出／失败信号的本机实测结果见上述 CLI 报告，见 [开发说明](../development.md)。既有 Web 接入实验不能视为 CLI 已验证；不同接入方式的报告分别记录，不因方案调整而抹去原实验。
 
 可复现探针放在 `probes/`：独立于接单工具运行代码，仅供 Research 复现。
