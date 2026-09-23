@@ -135,4 +135,7 @@ node src/main.mjs --capture pipe          # 临时改为管道捕获，在终端
 - 不承诺跨进程崩溃的 exactly-once：中断后如实报「结果不确定」，由人工核对后另发指令。
 - 不实现排队、跨机调度、自动换会话、自动 Review 修复循环、自动 merge 或部署。
 - 同一任务执行期间程序阻塞在该轮调用上，其他仓库的检查会顺延到本轮结束。
+- 每轮按标签拉取该仓库的 Open Issue 列表：默认 `github.pageSize` 为 100，大仓库（数百个带标签的
+  Open Issue）会产生多次分页请求。实测把 pageSize 调到 3 时，对 `microsoft/vscode`（label=bug）
+  会在 120 秒超时；接入这类仓库时请调大 `pageSize`，或只接入确实需要接单的仓库。
 - `harness.home` 缺省 `~/.dsh`；本工具只复用该安装与凭据，不安装、不升级、不重启工作中的 Harness。
