@@ -6,4 +6,5 @@ ADR 保存已接受的重要取舍与原因，不替代 Current，也不作为�
 
 | ADR | 状态 | 主题 |
 | --- | --- | --- |
-| [0001](0001-local-polling-and-session-handoff.md) | ACCEPTED | 本地轻量接单、任务会话续接，不建设全流程编排平台 |
+| [0001](0001-local-polling-and-session-handoff.md) | PARTIALLY_SUPERSEDED | 本地轻量接单与任务绑定继续有效；Web 接入部分由 0002 替代 |
+| [0002](0002-headless-cli-execution.md) | ACCEPTED | 直接启动 Harness headless CLI，模型 Key 本机保存，不依赖 Web 服务 |
