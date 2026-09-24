@@ -22,7 +22,21 @@
 
 本仓库是接单工具的源码。被接入项目有各自的代码目录、分支和开发环境。接单工具的本机状态与凭证单独保存，不混入两者的提交。
 
-准备 Git、Node.js、实际运行账户已授权的 GitHub CLI（`gh`）和本机 Harness CLI。模型 Key 在本机配置保存，仅通过受支持方式供给 Harness；不打印到终端、命令行实参或报告。配置 Key 不等于安装完成，也不证明 GitHub 权限、工具链与会话续接可用。
+本机部署明确分三层：
+
+```text
+.env / .env.example        Runner 人工部署配置
+.local/...                 Runner runtime state / task bindings / logs
+<DSH_HOME>/...             Harness config / credentials / sessions / state
+```
+
+`.env` 只配置 Runner 自身需要的入口，不保存模型 Key 或 GitHub token；`.local/` 只由 Runner 维护运行状态；Harness 的 credentials、profiles、sessions 与其他持久化数据归 `DSH_HOME`。仓库中的 `.env.example` 是部署入口示例，不代表 Scheduling Contract 已在此固定精确默认值。
+
+准备 Git、Node.js、实际运行账户已授权的 GitHub CLI（`gh`）和本机 Harness CLI。Runner 启动前先用 `gh auth status` 验证该执行账户可访问本机认证配置；失败时不进入轮询。Harness 复用同一执行账户可访问的本机 `gh` 配置，Runner 不向 Harness 注入或转发 `GH_TOKEN` / `GITHUB_TOKEN`。
+
+模型 Key 由 Harness 当前版本支持的凭据／配置机制保存并加载，仅通过其受支持方式供给 Harness；Runner 不建立第二份模型凭据存储。Key 不打印到终端、命令行实参或报告。配置 Key 不等于安装完成，也不证明 GitHub 权限、工具链与会话续接可用。
+
+共享一个 `DSH_HOME` 是首版优先目标，不是当前版本并发安全性的已验证事实。在 [Issue #36](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/36) 完成“同 home、不同 session 并发 + 同 session 单写入”实测前，实际 Runner 并发保持保守，不因文档目标直接开放到大于 1。
 
 检查这些条件不等于授权安装、升级、重启已有服务或执行真实开发任务。公开材料使用机器别名及脱敏路径，原始会话、日志和私有仓库清单只保存在本机。允许的测试配置与调用范围以验证 Issue 和维护者授权为准。
 
