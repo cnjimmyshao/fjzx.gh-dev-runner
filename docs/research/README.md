@@ -13,6 +13,7 @@
 报告：
 
 - [本机 Harness CLI 首轮执行与同会话续接验证](2026-09-23-local-harness-cli-first-run-and-resume.md)：本机 0.1.5-rc.2 的 headless 单轮执行可用，但该版本自身无 `--session-id` / `--json`；用 profile patch 挂本地 runner 后已实测跨进程续接，脚本在 `scripts/headless-session/`。
+- [START 阶段 sessionId 的创建与可见时点实测](2026-09-24-start-sessionid-visibility.md)：会话在进程启动后约 1.5–1.7s（热 profile）创建；本地 runner 只在整轮结束的最终结果里交付 `sessionId`，官方 headless 在本机 0.1.5-rc.2 完全不给，两者之间存在真实的「已创建但调用方不可见」窗口。
 
 原 Web 接入实验未并入本分支，其报告留在 [PR #4](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/pull/4) 与 Issue #3 供追溯，保留其时间点证据，不作为 CLI 已验证的依据。
 
