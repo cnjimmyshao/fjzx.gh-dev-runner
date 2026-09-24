@@ -35,7 +35,7 @@ START 用于首次创建该任务的 Harness session。
 
 - repository；
 - Issue number 与 Issue URL；
-- 触发 comment 的 URL 或 id；
+- 触发来源（Issue Body 或 Comment）及其可用的 URL / id；
 - 请求人身份。
 
 START 应明确要求 Dev：
@@ -68,11 +68,11 @@ Runner 只把已经过授权和路由校验的结构化身份写入消息。首�
 
 - repository；
 - Issue number / URL；
-- trigger comment URL / id；
+- trigger source（Issue Body 或 Comment）及其可用 URL / id；
 - requester；
 - START / RESUME 类型。
 
-不把任意 GitHub 文本直接拼成指令。触发 comment 的正文无需复制；当前命令本身只代表“开始 / 继续”。
+不把任意 GitHub 文本直接拼成指令。触发 Body / Comment 的正文无需复制；当前命令本身只代表“开始 / 继续”。
 
 如果实现为了本机排查需要记录消息协议版本，可在本机调用记录里保存轻量版本标识；这不是业务 Contract，也不要求建设 prompt 版本迁移系统。
 
