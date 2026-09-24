@@ -89,7 +89,6 @@ export function parseConfig(raw, { configPath, machineId, home = homedir() } = {
   const harness = {
     bin: expandPath(requireString(harnessRaw.bin, 'harness.bin'), baseDir),
     profile: requireString(harnessRaw.profile ?? 'headless', 'harness.profile'),
-    patch: expandPath(requireString(harnessRaw.patch, 'harness.patch'), baseDir),
     node: expandPath(optionalString(harnessRaw.node, 'harness.node') ?? process.execPath, baseDir),
     home: harnessRaw.home === undefined || harnessRaw.home === null
       ? undefined
@@ -196,7 +195,6 @@ export function checkConfig(config) {
   const problems = [];
   for (const [label, path] of [
     ['harness.bin', config.harness.bin],
-    ['harness.patch', config.harness.patch],
   ]) {
     try {
       accessSync(path, constants.R_OK);
