@@ -10,8 +10,8 @@ Current Version: 未编号（版本编号由维护者决定）
 - [开发环境与验证结果](../development.md)
 - [架构取舍](../decisions/README.md)
 
-已确认方向是轻量、本地增量检查、多个项目和多台电脑独立配置。GitHub 通信复用本机 `gh`；执行侧使用本机模型 Key 直接启动 Harness headless CLI，按任务记录和续接持久化会话，过程通过终端／本机日志观察。首版不再依赖常驻 Web 服务、cookie 引导或原 Web 界面。
+已确认方向是轻量、本地增量检查、多个项目和多台电脑独立配置。GitHub 通信复用执行账户已经认证的本机 `gh`，Runner 启动前检查 `gh auth status`，不向 Harness 转发 GitHub token。执行侧直接启动 Harness headless CLI，按任务记录和续接持久化会话；Runner 的 `.env`、Runner runtime state 与 Harness 的 `DSH_HOME` 分层保存，模型凭据归 Harness 配置边界。共享 `DSH_HOME` 的实际并发安全性由 Issue #36 单独 Research，在通过前不把该目标写成已验证能力。首版不再依赖常驻 Web 服务、cookie 引导或原 Web 界面。
 
 变更依据与代价见 [ADR 0002](../decisions/0002-headless-cli-execution.md)。原 Web Research 仍保留其时间点证据，不因运行方向改变而改写为 CLI 已验证。具体 CLI、凭据加载、续接和输出行为必须在实际安装版本上验证，不能从上游最新文档推断本机可用；实测记录见 [CLI 验证报告](../research/2026-09-23-local-harness-cli-first-run-and-resume.md)。
 
-首版 Runner 的用户可见触发语义已经在 [Runner 激活与任务触发 Contract](03-runner-trigger.md) 中确定：每台机器配置自己的 `runnerName`；新建 Issue Body 或后续**每一条新评论**都独立判断，只有该内容 trim 后以 `@<runnerName>` 结尾才表示现在开始／继续工作。普通回复本身不触发；同一 Issue 可在后续新回复末尾再次写 `@<runnerName>` 来 RESUME 原任务。不再使用 `runner:<machineId>` + `@dev` 两层触发。配置文件与持久化结构由各自实施 Issue 继续明确。除影响业务边界的事项外，普通实现取舍由实现者完成，不为每个配置字段增加人工审批。
+首版 Runner 的用户可见触发语义已经在 [Runner 激活与任务触发 Contract](03-runner-trigger.md) 中确定：每台机器配置自己的 `runnerName`；新建 Issue Body 或后续**每一条新评论**都独立判断，只有该内容 trim 后以 `@<runnerName>` 结尾才表示现在开始／继续工作。普通回复本身不触发；同一 Issue 可在后续新回复末尾再次写 `@<runnerName>` 来 RESUME 原任务。不再使用 `runner:<machineId>` + `@dev` 两层触发。Runner / Harness 配置职责边界见 [范围与工作链路](01-scope-and-flow.md)；Runner runtime state 的具体 Schema 由对应 State Contract 继续明确，调度字段与默认值由 Scheduling Contract 负责。除影响业务边界的事项外，普通实现取舍由实现者完成，不为每个配置字段增加人工审批。

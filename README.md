@@ -8,7 +8,7 @@
 
 一个本地接单程序服务多个明确接入的仓库。它通过本机 GitHub CLI（`gh`）增量检查授权人的 Issue Body / 后续新评论；每台电脑配置自己的 `runnerName`，每个新内容事件的正文 trim 后以 `@<runnerName>` 结尾时，才表示请求该电脑现在开始或继续工作。Runner 在对应工作目录直接启动 Harness headless CLI；首次执行记录会话标识，后续启动新进程续接同一持久化会话，不每次从头开发。
 
-DeepSeek 模型 API Key 在本机配置并保存，由 Harness 用于模型调用；实际需求分析、编码、测试与 PR 交付由 Dev 遵循目标项目的文档完成。Runner 只负责把正确的 Dev 叫起来并维护本机任务状态：合法执行请求成功启动或续接 Harness、进入对应 session 并取得 sessionId 后，只在目标 Issue 回复一次“Runner 名 + Session ID”；正常结束不代写开发结果，业务问题、PR 与交接由 Dev 自己处理。
+Runner 与 Harness 都复用执行机上同一运行账户已经完成认证的本机 GitHub CLI（`gh`）；Runner 启动前先检查 `gh auth status`，不向 Harness 注入或转发 `GH_TOKEN` / `GITHUB_TOKEN`。DeepSeek 模型凭据由 Harness 自己的受支持配置管理；Runner 只负责定位并启动指定的 Harness 环境，不把自己的整套配置当成 Harness 配置。实际需求分析、编码、测试与 PR 交付由 Dev 遵循目标项目的文档完成。Runner 只负责把正确的 Dev 叫起来并维护本机任务状态：合法执行请求成功启动或续接 Harness、进入对应 session 并取得 sessionId 后，只在目标 Issue 回复一次“Runner 名 + Session ID”；正常结束不代写开发结果，业务问题、PR 与交接由 Dev 自己处理。
 
 首版不依赖 Harness Web 服务、浏览器 cookie 或原网页实时观看，不依赖 GitHub Actions 定时轮询，不建设新的审查系统、中央调度平台或管理界面。已确认的取舍见 [ADR 0002](docs/decisions/0002-headless-cli-execution.md)。
 
@@ -26,7 +26,7 @@ DeepSeek 模型 API Key 在本机配置并保存，由 Harness 用于模型调�
 
 ## 公开仓库与本机数据
 
-示例仅使用占位信息。凭证、真实仓库接入清单、机器路径、任务绑定、会话历史与原始日志留在本机，不上传到本仓库或公开评论。模型 Key 不写入任务正文、命令行实参或日志。`.local/` 可用于尚未形成正式配置格式前的本机材料，已加入忽略规则；凭据存储仍需适当的本机访问权限，`.gitignore` 不替代提交前的内容检查。
+示例仅使用占位信息。真实 `.env`、凭证、真实仓库接入清单、机器路径、任务绑定、会话历史与原始日志留在本机，不上传到本仓库或公开评论。`.env.example` 只描述 Runner 的部署配置；Runner 自动维护的状态放在 `.local/`；Harness 自己的 credentials、profiles、sessions 与其他持久化数据放在独立 `DSH_HOME`。GitHub 登录状态由本机 `gh` 自己管理，不把 `GH_TOKEN` / `GITHUB_TOKEN` 复制进 Runner `.env` 再转交 Harness。模型 Key 不写入任务正文、可见命令行实参或日志。凭据存储仍需适当的本机访问权限，`.gitignore` 不替代提交前的内容检查。
 
 ## Runner 与 Dev 的反馈边界
 
