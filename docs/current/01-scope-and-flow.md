@@ -16,13 +16,14 @@
 
 本地按配置周期检查已接入仓库的新增内容，不用 Actions 定时扫描，也不为每次空检查调用模型。读取增量而非反复重读全部 Issue；初次启动不把历史命令全部重放。
 
-每台 Runner 在本机配置自己的 `runnerName`。授权人提交的新建 Issue Body，或已有 Issue 中后续新增的普通评论，**每一个新内容事件都独立判断**：正文 trim 后只有以 `@<runnerName>` 结尾，才表示请求该机器现在开始或继续工作。普通回复本身不会触发；Dev 回报后，维护者只有在新的回复末尾明确写上例如 `@MB01`，MB01 才再次执行。完整规则见 [Runner 激活与任务触发 Contract](03-runner-trigger.md)。
+每台 Runner 在本机配置自己的 `runnerName`。V1 一个 Issue 的当前 task binding 只归一个 Runner，不让多台机器同时处理同一 Issue；换 Runner 必须由维护者明确迁移绑定。对每个 Issue 只保留一个当前触发候选：创建时只接受授权主体的初始 Issue Body；进入评论阶段后，只看当前最新一条 eligible control comment，也就是“授权主体发布且不是 Runner 自动反馈”的普通评论。所有 Runner 自动反馈统一以保留前缀 `BOT:<runnerName>` 开头，任何 `BOT:` 评论都不参与候选选择。候选正文 trim 后只有以 `@<runnerName>` 结尾，才表示请求该机器现在开始或继续工作。更早的授权评论不排队、不补执行；如果原来的 `@MB01` 后来被授权主体新的普通回复覆盖，它就自然失效。完整规则见 [Runner 激活与任务触发 Contract](03-runner-trigger.md)。
 
 示意链路（尚未实现）：
 
 ```text
-授权人的新建 Issue Body / 后续新评论
-且该内容 trim 后以 @<runnerName> 结尾
+新建 Issue：检查一次授权主体的初始 Body
+已有评论：只检查当前最新 eligible control comment
+且当前候选 trim 后以 @<runnerName> 结尾
 → 对应电脑通过 gh 识别执行请求
 → 按仓库身份 + Issue 编号定位工作目录和绑定
 → 首次：START，新建并记录 Harness session
@@ -32,7 +33,7 @@
 → Runner 本机记录启动、运行、结束与异常轨迹
 ```
 
-同一份 GitHub 内容事件不重复执行，同一任务不同时启动两个写入者。任务正在执行时不能另开进程或会话抢写同一分支；具体并发、pending 和领取规则由调度 Contract 负责。多台电脑的 Runner 名称由部署者保持唯一，不建设分布式选主。
+同一当前候选不重复执行，同一任务不同时启动两个写入者。任务正在执行时不能另开进程或会话抢写同一分支；Runner 仍可继续观察新的授权评论，但只保留一个“下一步候选”，不维护 pending 队列。每个 Issue 用单调前进的 `eligibleCommentWatermark` 表示评论看到哪里；`lastTrigger(status=observed)` 只保存当前唯一、尚未开始的候选。真正启动前，Runner 必须把该 trigger 原子转入独立的 `activeRuns(status=starting)` 并消费 `lastTrigger`，之后 starting/running/unknown 的恢复状态只由 `activeRuns` 保存。新的授权普通回复会推进水位并清除尚未开始的 Body/Comment 候选；新的命令回复会替换成最新候选，但都不得覆盖已经存在的 active run。当前 active run 结束后再重新核对最新候选并决定是否启动下一轮。启动失败不自动重试已消费候选。具体机器级／仓库级容量与领取规则由调度 Contract 负责。多台电脑的 Runner 名称由部署者保持唯一，不建设分布式选主。
 
 ## 会话与工作目录
 
@@ -58,7 +59,7 @@ GitHub 通信复用实际运行账户已授权的 `gh`；安装 CLI 不等于该
 
 本机配置和凭证不入库，授权至少绑定仓库、发起人和目标 Runner。GitHub 内容是外部输入，不得拼成 shell 命令；启动受信任的 CLI 并将任务作为数据传递。其他权限和沙箱使用已有工具能力，不为内部约定重复制造防御框架。
 
-Runner 的 GitHub 回写只覆盖自己的控制责任：一条合法的新 Body / Comment 命令成功启动或续接 Harness，并进入对应 session 后，回复一次“Runner 名 + Session ID”；如果 Harness 根本无法正常启动或续接，导致 Dev 没有进入可工作的 session，则在原 Issue 留一条简短失败回复。普通讨论、Dev 回报以及不以本机 `@<runnerName>` 结尾的回复不是执行请求，不因“有新评论”本身触发 Runner。
+Runner 的 GitHub 回写只覆盖自己的控制责任：合法的授权初始 Body 或当前 eligible control comment 触发成功启动或续接 Harness，并进入对应 session 后，以 `BOT:<runnerName>` 开头回复一次“Runner 名 + Session ID”；如果 Harness 根本无法正常启动或续接，导致 Dev 没有进入可工作的 session，则同样以 `BOT:<runnerName>` 开头留一条简短失败回复。普通讨论、Dev 回报以及不以本机 `@<runnerName>` 结尾的回复不是执行请求，不因“有新评论”本身触发 Runner。
 
 Harness 正常退出后，Runner **不**自动写 `completed`、执行结束、开发完成或模型回答摘要，也不把 stdout、exit code、`status.kind` 转述成业务结果。Runner 在本机保存完整运行追踪，包括触发来源、START/RESUME、session、启动/结束时间、运行时长、进程/退出状态、异常摘要及必要恢复信息；这些技术状态用于去重、释放执行状态、正确续接和故障诊断，不等于需要公开到 GitHub。业务完成、测试结果、PR、Review 修复与待维护者决定的问题，由 Dev 在 Harness 会话中按目标项目规则直接处理。
 
