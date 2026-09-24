@@ -30,14 +30,15 @@ Status: VERIFIED（范围限本文记录的时间、版本、电脑、调用路�
 
 时间基准与精度：
 
-- 父进程在 `spawn()` 前一瞬记录 `t0`（`spawn-called` 事件实测在 6–8ms）；
-- 会话创建时刻取会话头 `session.v3.jsonl.zstd` 的 `createdAt`（毫秒 epoch），另记文件 `birthtime`；
-- 输出可见时刻取 stdout／stderr 文件的 mtime，轮询粒度 5ms，即表里的可见时刻最多偏晚 5–10ms，不会偏早；
-- 会话目录是否已存在的观测粒度同为 5ms；每条路径至少跑 2 次（acp 那条因下述限制只跑 2 次均未成功），同一路径各次的会话创建时刻相差不超过 180ms。
+- 父进程在 `spawn()` 前一瞬记录 `t0`（`spawn-called` 事件实测在 7–10ms）；
+- 会话创建时刻取会话头 `session.v3.jsonl.zstd` 的 `createdAt`（毫秒 epoch），并以目录／文件 `birthtime` 交叉核对，两者相差 18–29ms（同一批样本）；
+- 输出可见时刻取 stdout／stderr 文件的 mtime，扫描间隔为 5ms；
+- **扫描间隔不是精度上界**：Node 事件循环与文件系统调度都不保证回调按时运行，本批样本里「写入 mtime → 被观察到」的差值为 1–22ms。因此表里的可见时刻是「不早于实际写入」的观测值，逐次误差由日志里的 `mtime` 字段给出，不要把它当成固定 5–10ms 的保证；
+- 会话创建时刻在热 profile 下的分布：路径 A 三次分别 1612／1626／1784ms，路径 B 两次 1624／1804ms（同批样本极差 <200ms）；路径 B 的冷 profile 首次建链接样本（20503ms）不计入该比较，它是启动器建 profile 链接的耗时。
 
 ## Evidence
 
-复现件：[`probes/start-sessionid-timing-probe.mjs`](probes/start-sessionid-timing-probe.mjs)。每个模式跑一次，结果落到 `PROBE_OUT` 下的 report JSON 与 stdout／stderr 日志：
+复现件：[`probes/start-sessionid-timing-probe.mjs`](probes/start-sessionid-timing-probe.mjs)。每个模式跑一次，结果落到 `PROBE_OUT` 下的 report JSON 与 stdout／stderr 日志；report 里每次都带 `session-created` 事件（含该次会话的目录与文件时刻、会话头 `createdAt`）与 `sessionId-visible-in-stdout`、`result-file-visible` 事件：
 
 ```powershell
 $env:DSH_HOME = '<独立测试 home>'
@@ -53,27 +54,36 @@ node docs\research\probes\start-sessionid-timing-probe.mjs acp-new-only   <独�
 
 ### 1. 调用路径 A：本地 runner（`--patch scripts/headless-session/overlay.yml`）
 
-`scripts/headless-session/runner.mjs` 在 `agents.create()` 时先用 `session-${randomUUID()}` 定下标识（第 138、159 行），turn 结束后才把 `sessionId` 写进最后那行 result JSON（第 186–193 行）；`DSH_RESULT_FILE` 写的是同一份内容。
+`scripts/headless-session/runner.mjs` 在 `agents.create()` 时先用 `session-${randomUUID()}` 定下标识（第 138、159 行），turn 结束后才把 `sessionId` 写进最后那行 result JSON（第 186–193 行）；`DSH_RESULT_FILE` 写的是同一份内容。下列时刻都相对本进程的 spawn，单位 ms。
 
-| 运行 | 会话创建 | stdout／stderr 首次可见 | 结果行的 sessionId 可见 | 子进程退出 | 退出码 |
-| --- | --- | --- | --- | --- | --- |
-| 新建 + 真实模型轮次（`completed`，第 1 次） | 1631ms | stderr 1647ms（`DSH_DEBUG_RUNNER=1` 的 `created …` 行）；stdout 2534ms | 2630ms（父进程读到，实测写入 2530ms） | 2574ms | 0 |
-| 新建 + 真实模型轮次（`completed`，第 2 次，未开调试） | 1807ms | 无 stderr 输出；stdout 2582ms | 2662ms（写入 2565ms） | 2615ms | 0 |
-| 新建 + 无凭据（`MISSING_CREDENTIAL`） | 1585ms | stderr 1599ms（调试行）；stdout 1662ms | 1758ms | 1710ms | 1 |
-| 续接不存在的会话 | 不适用（未创建） | stderr 1704ms | 无（stdout 为空） | 1748ms | 1 |
+| 运行 | 会话创建（header `createdAt`） | 目录／会话文件 `birthtime` | stderr 首次可见 | stdout 首次可见 | 结果行 sessionId 可见 | 结果文件可见 | 子进程退出 | 退出码 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 真实模型轮次（第 1 次） | 1612 | 1630／1638 | 2493（模型 reasoning） | 2664 | 2665 | 2665 | 2717 | 0 |
+| 真实模型轮次（第 2 次，重复） | 1784 | 1805／1813 | 无 stderr 输出 | 2854 | 2855 | 2855 | 2902 | 0 |
+| 真实模型轮次（开 `DSH_DEBUG_RUNNER=1`） | 1626 | 1645／1655 | 1656（`created …` 调试行） | 3618 | 3619 | 3619 | 3668 | 0 |
+| 无凭据（`MISSING_CREDENTIAL`） | 1585 | 1610／1654 | 1599（调试行） | 1662 | 1758 | 1758 | 1710 | 1 |
+| 续接不存在的会话 | 不适用（未创建） | — | 1622（`session … not found`） | 无 | 无 | 无 | 1682 | 1 |
 
-结论：**默认输出下，从会话创建到 turn 结束之间的整段区间（第 1 次 1631–2530ms、第 2 次 1807–2565ms）调用方拿不到任何 sessionId**；唯一交付点是 turn 结束后的 result JSON。第 2 次运行更能说明问题：那次没有开调试输出，会话创建后直到 turn 结束前 stdout／stderr 一个字节都没有。打开 `DSH_DEBUG_RUNNER=1` 后，会话创建到调试行可见相隔约 12–16ms，但调试行不是正式交付契约（脚本 README 只把它列为可选运行细节），且它是自由文本、不能单独作为绑定依据。
+（会话创建时刻以会话头 `createdAt` 为准；`createdAt` 与目录／文件 `birthtime` 两种口径相差 18–29ms。最后一行的「无凭据」取自更早一批样本，其目录与文件时刻为 1610／1654ms。）
+
+结论：
+
+- **默认输出下，从会话创建到 turn 结束之间的整段区间调用方拿不到任何 sessionId**：第 1 次是 1612→2665ms，第 2 次是 1784→2855ms，**间隔都在 1.0–1.1s**；这段时间 stdout／stderr 没有任何可用标识（第 2 次连 stderr 都是空的）。
+- 唯一交付点是 turn 结束后的 result JSON／`DSH_RESULT_FILE`，两者在同一毫秒级窗口内可读。
+- 打开 `DSH_DEBUG_RUNNER=1` 后，会话创建到调试行可见只隔 **30ms**（1626→1656），而同一次运行的 stdout 直到 3618ms 才出现（相隔约 1.96s）；但调试行不是正式交付契约（脚本 README 只把它列为可选运行细节），且是自由文本、不能单独作为绑定依据。
+- 热 profile 下三次运行的会话创建时刻在 **1585–1810ms**；冷 profile 首次建 profile 链接那次是 20503ms（见路径 B），差值来自启动器建立 profile 链接而不是会话创建本身。
 
 ### 2. 调用路径 B：官方 headless（本机 0.1.5-rc.2 只有 `[task...]`）
 
 `@deepseek-ai/dsh-headless` 的 runner 同样在 `agents.create()` 时用 `session-${randomUUID()}` 创建会话，但只用 `io.stdout.write(outcome.text + "\n")` 输出最终回答，从不回传标识。
 
-| 运行 | 会话创建 | stdout 首次可见 | 子进程退出 | 退出码 | 输出里能否取得 sessionId |
+| 运行 | 会话创建（header `createdAt`） | stdout 首次可见 | 子进程退出 | 退出码 | 输出里能否取得 sessionId |
 | --- | --- | --- | --- | --- | --- |
-| 真实模型轮次（冷 profile 首次链接） | 20503ms | 20605ms（最终回答） | 20663ms | 0 | 不能 |
-| 无凭据（热 profile） | 1628ms | 1708ms（stderr 错误行；stdout 为空） | 1744ms | 1 | 不能 |
+| 真实模型轮次（热 profile） | 1804 | 2672（stderr reasoning 2518，最终回答在 stdout） | 2714 | 0 | 不能 |
+| 无凭据（独立空 home，热 profile） | 1624 | 1709（stderr 错误行；stdout 为空） | 1751 | 1 | 不能 |
+| 真实模型轮次（冷 profile 首次建链接，首轮实测） | 20503 | 20605（最终回答） | 20663 | 0 | 不能 |
 
-两次运行都在会话创建后约 100ms 内结束输出并退出；即使在 model turn 正常完成的那次，输出也只有最终回答一行。本机版本没有 `--json`／`--session-id`（与 [CLI 验证报告](2026-09-23-local-harness-cli-first-run-and-resume.md) 一致），因此**官方路径在本机版本下完全没有取得 sessionId 的调用方接口**。
+三次运行都在会话创建后约 40–100ms 内结束输出并退出；即使在 model turn 正常完成的那次，输出也只有最终回答一行。本机版本没有 `--json`／`--session-id`（与 [CLI 验证报告](2026-09-23-local-harness-cli-first-run-and-resume.md) 一致），因此**官方路径在本机版本下完全没有取得 sessionId 的调用方接口**。
 
 ### 3. 调用路径 C：acp profile（只做 `session/new`，不投递 prompt）
 
@@ -81,10 +91,10 @@ node docs\research\probes\start-sessionid-timing-probe.mjs acp-new-only   <独�
 
 | 运行 | `initialize` 响应 | `session/new` 响应 | 会话目录 | 结论 |
 | --- | --- | --- | --- | --- |
-| Node 探针（普通文件当 stdin） | 18ms | 未观察到 | 未创建 | 不可用：文件 stdin 会重放，服务端只处理了同 id 的首条请求 |
+| Node 探针（普通文件当 stdin，固定提交版） | 1723ms | 未观察到 | 未创建 | 不可用：文件 stdin 会重放，服务端只处理了同 id 的首条请求 |
 | PowerShell 管道 stdin（两行请求一次送入） | 实测返回 | 未返回；子进程 2003ms 后自行退出，退出码 0 | 未创建 | 本机沙箱下**未能复现**该路径 |
 
-`initialize` 两次都成功返回（说明请求投递链路是通的），但 `session/new` 没有响应、也没有留下会话目录。这与 [CLI 验证报告](2026-09-23-local-harness-cli-first-run-and-resume.md) 用 `acp-session-probe.mjs` 实测成功的结论不同：那次探针由自己的 Node 进程用管道逐条交互，本次因沙箱禁止管道而改用静态 stdin，**属于本次工具链限制，不推翻原记录**。因此路径 C 的「`session/new` 能在 turn 之前返回 sessionId」只有源码依据（`newSession` 的返回位置）与 #7 的历史实测，本次没有新增独立证据。
+`initialize` 每次都成功返回（说明请求投递链路是通的），但 `session/new` 没有响应、也没有留下会话目录。这里的**请求顺序不受控**：静态 stdin 只能一次写好两行，`session/new` 可能在 `initialize` 尚未完成时到达，而仓库里逐条交互的 `acp-session-probe.mjs` 是等 `initialize` 响应后再发的；因此「未复现」不能只归因于沙箱禁止管道，至少请求时序也是一个未受控变量。这与 [CLI 验证报告](2026-09-23-local-harness-cli-first-run-and-resume.md) 用 `acp-session-probe.mjs` 实测成功的结论不同，**属于本次工具链限制，不推翻原记录**。路径 C 的「`session/new` 能在 turn 之前返回 sessionId」只有源码依据（`newSession` 的返回位置）与 #7 的历史实测，本次没有新增独立证据。
 
 ### 4. 崩溃窗口（路径 A，turn 中途强杀）
 
@@ -92,31 +102,32 @@ node docs\research\probes\start-sessionid-timing-probe.mjs acp-new-only   <独�
 
 | 观测项 | 结果 |
 | --- | --- |
-| 会话创建 | `createdAt` 在 t0+1637ms，文件 `birthtime` t0+1663ms |
-| 强杀时刻 | t0+12045ms（子进程退出 t0+12066ms） |
-| 本轮的 result 文件 | **不存在**（目录里那份是上一次运行遗留，其 sessionId 属于上一轮的会话） |
-| 会话目录 | **已存在**，内含 `session.v3.jsonl.zstd`，但强杀时文件只有部分内容，`zstd` 解压失败，读不出 `id`／`createdAt` |
-| 调用方可见的 sessionId | 仅 stderr 的 `dsh-session: created session-1a38b738…`（`DSH_DEBUG_RUNNER=1`）；默认设置下为空 |
-| stdout | 空 |
+| 会话创建 | header `createdAt` 在 t0+1630ms，目录 `birthtime` t0+1650ms |
+| 会话文件 | t0+1658ms 出现，t0+2512ms 写入完成：12.6KB 的 `session.v3.jsonl.zstd`，强杀后可解压，内容只有一行 `session` 头（本轮 turn 的事件一个都没落盘） |
+| 强杀时刻 | t0+12034ms（子进程退出 t0+12053ms） |
+| 本轮的 result 文件 | **不存在**（探针在启动前已删除同 tag 的旧文件，因此不会被上次运行的结果误认） |
+| 会话目录 | **已存在**，`id`／`createdAt` 可从会话头读出（会话身份在强杀前已经落盘） |
+| 调用方可见的 sessionId | 仅 stderr 的 `dsh-session: created session-caf486d9…`（本次为观察窗口打开了 `DSH_DEBUG_RUNNER=1`）；默认设置下为空 |
+| stdout | 空（0 字节） |
 
-窗口存在且可复核：**从会话创建（约 t0+1.6s）到结果交付之间，会话已经存在于 Harness 持久化里，但调用方拿不到标识**；这段窗口内进程被杀，就会留下一个没有绑定关系的会话。
+窗口存在且可复核：**从会话创建（约 t0+1.6s）到结果交付之间，会话头已经落盘、会话身份可以恢复，但调用方拿不到标识**；这段窗口内进程被杀，就会留下一个没有绑定关系的会话，而本轮 turn 的事件也没有落盘。窗口长度等于整轮 turn 的时长，本机短任务约 1.0–1.1s（见路径 A），长任务按实际耗时放大。
 
 ### 5. 「只创建会话、不跑 turn」
 
 分三层看，结论不同：
 
-- **Harness 侧（代码依据，未新增实测）**：`agents.create()` 在收到模型错误前就已经把会话写进持久化——两次 `MISSING_CREDENTIAL` 运行都留下了完整会话头（约 12.7KB 的 `session.v3.jsonl.zstd`，内容只有一行 `session` 头），说明「创建会话」与「跑 model turn」是两个可分离的阶段。
+- **Harness 侧（代码依据，未新增实测）**：`agents.create()` 在收到模型错误前就已经把会话头写进持久化——两次 `MISSING_CREDENTIAL` 运行都留下了可解压的 `session.v3.jsonl.zstd`（约 12.7KB，内容只有一行 `session` 头），说明「创建会话」与「跑 model turn」是两个可分离的阶段，只是没有任何界面把前者单独暴露出来。
 - **官方 headless CLI（实测）**：没有只创建会话的接口；本机版本连 `--session-id`／`--json` 都没有（本报告 2）。
 - **本地 runner（实测 + 源码）**：也没有这种模式，但它已经持有标识——`sessionId` 在 `agents.create()` 之前就由 wrapper 生成（`runner.mjs` 第 138 行），唯一的问题是只在最后输出。**这一层的缺口属于 wrapper，不属于 Harness**。
 
 ## Conclusion（逐条回答 Issue #33）
 
 1. **版本与路径**：本机 `@deepseek-ai/dsh` 0.1.5-rc.2；START 实际有三条可测路径——本地 runner（`--patch` overlay）、官方 headless、acp profile。产品当前使用第一条（[Current](../current/01-scope-and-flow.md)），官方 `--json`／`--session-id` 路径属更高版本，本机不具备。
-2. **会话何时创建**：`agents.create()` 一执行就创建，实测相对进程启动约 **1.6–1.8s**（路径 A／B 的热 profile：1.58–1.81s；路径 B 冷 profile 首次链接：20.5s，差值来自启动器建立 profile 链接，不是会话创建本身）。
+2. **会话何时创建**：`agents.create()` 一执行就创建，实测相对进程启动约 **1.6–1.8s**（路径 A 三次 1612／1626／1784ms，路径 B 热 profile 1624／1804ms；路径 B 冷 profile 首次建链接那次 20503ms，差值来自启动器建立 profile 链接，不是会话创建本身）。
 3. **调用方何时第一次可靠取得 sessionId**：路径 A 是「**整轮结束后的最终结果**」（result JSON／`DSH_RESULT_FILE`）；路径 B 是「**任何时刻都取不到**」；路径 C 按源码与 #7 实测是「`session/new` 响应」，本次未复现。
-4. **长任务能否先取得**：路径 A **不能**。实测模型轮次进行中 stdout 为空，结果行在 turn 结束之后（第 1 次 2630ms、第 2 次 2662ms）才出现。若打开 `DSH_DEBUG_RUNNER=1`，stderr 会在创建后约 12–16ms 出现 `created <id>`，但那是可选调试输出，不是契约。
-5. **崩溃窗口是否真实存在**：**存在**。位于「会话创建（约 t0+1.6s）」与「结果交付（turn 结束后）」之间；窗口内强杀会留下已创建但无法从调用方输出读取的会话，且会话文件可能只写入了一部分。
-6. **只创建会话、不跑 turn 的接口**：Harness **没有**官方或已验证的独立接口（`agents.create()` 与 turn 是两个阶段，但 CLI／runner 都不暴露前者）。**对当前 runner 而言不需要新接口**：标识由 wrapper 自己生成，改成创建后立即交付即可；官方 headless 则需要上游提供（#19／#21 的 JSONL `session` 事件方向正是针对这一点，本机版本未验证）。
+4. **长任务能否先取得**：路径 A **不能**。实测模型轮次进行中 stdout 为空，结果行在 turn 结束之后（第 1 次 2665ms、第 2 次 2855ms）才出现，距会话创建 1053／1071ms。若打开 `DSH_DEBUG_RUNNER=1`，stderr 会在创建后约 30ms 出现 `created <id>`，但那是可选调试输出，不是契约。
+5. **崩溃窗口是否真实存在**：**存在**。位于「会话创建（约 t0+1.6s）」与「结果交付（turn 结束后）」之间；窗口内强杀时，会话头已经落盘、标识可从持久化恢复，但调用方输出里没有它，且本轮 turn 的事件尚未落盘。
+6. **只创建会话、不跑 turn 的接口**：**所选的两条 headless 路径都没有**——本地 runner 没有这种模式，官方 headless CLI 在本机版本连 `--session-id` 都没有；这与路径 C 的事实（bundled ACP 的 `session/new` 会在模型 turn 前返回 sessionId，见证据 3 与 #7）并不矛盾：ACP 是另一种界面，本机沙箱下未能复现，不能据此说「Harness 完全没有该能力」。**对当前 runner 而言也不需要新接口**：标识由 wrapper 自己生成（`runner.mjs` 第 138 行），改成创建后立即交付即可；官方 headless 需要上游提供（#19／#21 的 JSONL `session` 事件方向正是针对这一点，本机版本未验证）。
 
 ## Contract Impact
 
@@ -128,8 +139,9 @@ node docs\research\probes\start-sessionid-timing-probe.mjs acp-new-only   <独�
 ## 未覆盖范围
 
 - 未安装、未升级、未重启任何 Harness；本报告只描述 0.1.5-rc.2 的实测结果。
-- 未复现 acp `session/new`（沙箱限制，见证据 3）；该路径的结论依赖源码与 #7 历史实测，本次无新增独立证据。
+- 未复现 acp `session/new`（沙箱限制 + 请求时序未受控，见证据 3）；该路径的结论依赖源码与 #7 历史实测，本次无新增独立证据。
 - 未覆盖并发写入者、审批交互、多台电脑、Harness 进程重启后的续接。
 - 长 turn 实测用的是 12s 强杀；模型推理耗时受网络与模型侧影响，本报告只按实际观测的时间线陈述，不外推到其他时长。
-- 原始凭据、完整会话日志、模型正文与绝对机器路径未进入本报告；测试会话与临时目录只留在本机。
+- 可见时刻的观测误差逐次不同（见「时间基准与精度」），不构成固定精度保证。
+- 原始凭据、完整会话日志、模型正文与绝对机器路径未进入本报告；测试会话与临时目录只留在本机，报告里的会话标识只保留前 12 个字符。
 - 探针本身的运行受本机沙箱限制（不能用管道），复现时若环境允许管道，可用更直接的方式重跑。
