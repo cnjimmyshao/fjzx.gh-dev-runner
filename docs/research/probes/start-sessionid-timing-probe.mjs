@@ -11,7 +11,7 @@
 //
 // 实现约束：本机沙箱禁止父进程用管道捕获子进程输出（spawn EPERM），因此子进程的
 // stdout／stderr 接到父进程预先打开的普通文件句柄；ACP 模式的 stdin 同样用普通文件
-// 代替管道（句柄偏移留在 0，父进程以追加方式写入请求行）。
+// 代替管道，代价是两条请求必须预写、请求顺序不受控。
 //
 // 用法（PowerShell）：
 //   $env:DSH_HOME  = '<独立测试 home>'
@@ -88,6 +88,17 @@ function maskId(id) {
   return typeof id === 'string' && id.length > 12 ? `${id.slice(0, 12)}…` : (id ?? null);
 }
 
+/** 会话目录下的一级子目录就是会话标识；目录不可读时返回空列表。 */
+function listSessionIds(root, slug) {
+  try {
+    return readdirSync(join(root, slug), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+}
+
 /** 会话头里的 createdAt 是「会话被创建」的权威时刻，比目录轮询更精确。 */
 function readSessionHeader(slug, sessionId) {
   try {
@@ -106,6 +117,9 @@ function readSessionHeader(slug, sessionId) {
   }
 }
 
+/** 文件系统给不出创建时刻时，用这个容差判断会话是否早于本轮启动。 */
+const SESSION_START_TOLERANCE_MS = 2000;
+
 function startObservers() {
   const root = join(DSH_HOME, 'sessions');
   mkdirSync(root, { recursive: true });
@@ -113,39 +127,35 @@ function startObservers() {
   // 这样同一个 DSH_HOME + 工作目录连续跑多次也能逐次读到新建会话。
   const knownSlugs = new Set(readdirSync(root));
   const knownSessions = new Map();
-  // 之前几次运行留下的会话目录会在第一次扫描时就被看到，不能当成「本轮创建」：
-  // 记下它们的目录与文件创建时刻，只有落在本轮启动之后的才算本轮的新建会话。
   const pending = new Map();
-  const notePendingIfOld = (slug, sessionId) => {
+  /**
+   * 之前几次运行留下的会话目录会在第一次扫描时就被看到，不能当成「本轮创建」。
+   * 判定顺序：目录／会话文件的创建时刻明确早于本轮 t0 → 旧会话；两者都拿不到
+   * （文件系统不提供 birthtime）时用下面的容差兜底。
+   */
+  const isPreExisting = (slug, sessionId) => {
     const dir = join(root, slug, sessionId);
     let dirBirth = null;
     let fileBirth = null;
     try {
       dirBirth = statSync(dir).birthtimeMs;
-      const file = join(dir, 'session.v3.jsonl.zstd');
-      fileBirth = statSync(file).birthtimeMs;
-    } catch { /* 还没写出来 */ }
-    if (dirBirth !== null && dirBirth < t0) pending.set(`${slug}/${sessionId}`, 'pre-existing');
-    else if (fileBirth !== null && fileBirth < t0) pending.set(`${slug}/${sessionId}`, 'pre-existing');
+      fileBirth = statSync(join(dir, 'session.v3.jsonl.zstd')).birthtimeMs;
+    } catch { /* 文件还没写出来 */ }
+    const known = [dirBirth, fileBirth].filter((value) => value !== null && Number.isFinite(value));
+    if (known.length === 0) return Date.now() - t0 < SESSION_START_TOLERANCE_MS;
+    return Math.min(...known) < t0;
   };
+  // 启动前就存在的 slug 及其会话全部标记为旧；新 slug 从空集合开始观察，
+  // 否则「slug 与 session 子目录在第一次扫描前都已创建」时会把首个会话吞掉。
   for (const slug of knownSlugs) {
-    for (const sessionId of readdirSync(join(root, slug), { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)) notePendingIfOld(slug, sessionId);
-  }
-  const snapshotSessions = (slug) => {
-    try {
-      return new Set(readdirSync(join(root, slug), { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => entry.name));
-    } catch {
-      return new Set();
+    for (const sessionId of listSessionIds(root, slug)) {
+      if (isPreExisting(slug, sessionId)) pending.set(`${slug}/${sessionId}`, 'pre-existing');
     }
-  };
+  }
   const observeSlug = (slug) => {
     if (knownSlugs.has(slug)) return;
     knownSlugs.add(slug);
-    knownSessions.set(slug, snapshotSessions(slug));
+    knownSessions.set(slug, new Set());
     mark('session-slug-created', { slug: slugOf(slug) });
   };
   const headerOf = (slug, sessionId) => `${slug}/${sessionId}`;
@@ -160,8 +170,10 @@ function startObservers() {
     }
     known.add(sessionId);
     knownSessions.set(slug, known);
-    notePendingIfOld(slug, sessionId);
-    if (pending.get(headerOf(slug, sessionId)) === 'pre-existing') return;
+    if (pending.get(headerOf(slug, sessionId)) === 'pre-existing' || isPreExisting(slug, sessionId)) {
+      pending.set(headerOf(slug, sessionId), 'pre-existing');
+      return;
+    }
     const dir = join(root, slug, sessionId);
     let dirBirthSinceStart = null;
     let files = [];
@@ -180,7 +192,7 @@ function startObservers() {
   const scanSessions = () => {
     for (const slug of readdirSync(root)) {
       observeSlug(slug);
-      for (const sessionId of snapshotSessions(slug)) observeSession(slug, sessionId);
+      for (const sessionId of listSessionIds(root, slug)) observeSession(slug, sessionId);
     }
   };
   // 目录创建事件优先用 fs.watch，避免轮询抖动错过窗口；另保留 5ms 兜底扫描。
@@ -245,7 +257,14 @@ function spawnChild(args, env, extra) {
   });
   child = launched;
   mark('spawn-called', { pid: launched.pid });
-  launched.on('error', (error) => mark('child-spawn-error', { message: String(error.message).slice(0, 200) }));
+  launched.on('error', (error) => {
+    mark('child-spawn-error', { message: String(error.message).slice(0, 200) });
+    // spawn 失败不会有 exit 事件；不在这里结算，waitExit() 会一直等到超时。
+    if (childExitedAt === null) {
+      childExitedAt = Date.now() - t0;
+      exitCode = null;
+    }
+  });
   launched.on('exit', (code) => {
     childExitedAt = Date.now() - t0;
     exitCode = code;
@@ -261,6 +280,9 @@ function waitExit() {
       timedOut = true;
       mark('probe-timeout', { timeoutMs });
       child.kill('SIGKILL');
+      // 子进程可能根本没起来（spawn 失败）或杀不掉，不能只等 exit。
+      if (childExitedAt === null) childExitedAt = Date.now() - t0;
+      setTimeout(resolve, 50);
     }, timeoutMs);
     child.on('exit', () => {
       clearTimeout(timer);
@@ -293,8 +315,11 @@ function resultOf(line) {
   }
 }
 
-/** stdout 增长时立刻解析，取 sessionId 首次可见的时刻（而不是等子进程退出后再读）。 */
+/** stdout 增长时立刻解析，取 sessionId 首次可见的时刻（而不是等子进程退出后再读）。
+ *  只在 overlay 模式解析：只有它承诺 stdout 是 result JSON；official 的 stdout 是模型
+ *  正文，若正文里恰好出现 `sessionId` 字段，会被误当成 CLI 交付的标识。 */
 function observeResultLine() {
+  if (mode !== 'overlay') return;
   for (const line of stdoutLines()) {
     let parsed;
     try {
@@ -358,11 +383,11 @@ async function runOfficial() {
 
 async function runAcp() {
   const inFile = join(OUT, `stdin-${tag}.log`);
-  // 沙箱不允许管道：既不能 pipe 捕获输出，也不能用命名管道做 stdin。这里用普通文件
-  // 充当 stdin，只能预先把两条请求一次写好（普通文件每次 read 都从偏移 0 开始，会在
-  // 已写内容上重放，无法按响应逐条追加）。因此**请求顺序不受控**：session/new 可能在
-  // initialize 尚未完成时到达，这一点与仓库里逐条交互的 acp-session-probe.mjs 不同，
-  // 结论里必须保留为未受控的实验变量，不能只归因于「没有管道」。
+  // 沙箱不允许管道：既不能 pipe 捕获输出，也不能用命名管道做 stdin，只能把两条请求
+  // 预写进普通文件，由子进程以文件读句柄读取。因此**请求顺序不受控**：`session/new`
+  // 与 `initialize` 同时可读，可能在 initialize 完成前就被处理，这一点与仓库里逐条
+  // 交互的 acp-session-probe.mjs 不同。本模式只能用于观察「只做 session/new 时是否
+  // 立刻拿到 id」，结论里必须保留这个未受控变量。
   writeFileSync(inFile, [
     { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: 1, clientCapabilities: {} } },
     { jsonrpc: '2.0', id: 2, method: 'session/new', params: { cwd, mcpServers: [] } },
