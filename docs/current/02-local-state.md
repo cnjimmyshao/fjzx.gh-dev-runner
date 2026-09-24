@@ -63,8 +63,9 @@ activeRuns
 repositories
 └── owner/repo
     └── "<issueNumber>"
-        ├── seenSeq
-        ├── commands[]
+        ├── issueBodyHandled
+        ├── eligibleCommentWatermark
+        ├── lastTrigger
         ├── binding
         └── lastRun
 ```
@@ -95,19 +96,16 @@ repositories
   "repositories": {
     "owner/project": {
       "42": {
-        "seenSeq": 123456,
-        "commands": [
-          {
-            "sourceType": "comment",
-            "sourceId": "123456",
-            "author": "maintainer-login",
-            "status": "claimed",
-            "at": "2026-09-24T00:00:00.000Z",
-            "finishedAt": null,
-            "feedbackSent": false,
-            "retryable": false
-          }
-        ],
+        "issueBodyHandled": true,
+        "eligibleCommentWatermark": "123456",
+        "lastTrigger": {
+          "sourceType": "comment",
+          "sourceId": "123456",
+          "author": "maintainer-login",
+          "status": "claimed",
+          "at": "2026-09-24T00:00:00.000Z",
+          "feedbackSent": false
+        },
         "binding": {
           "runnerName": "MB01",
           "dir": "<本机绝对任务目录>",
@@ -147,8 +145,9 @@ repositories
 
 | 字段 | 稳定性 | 含义 |
 | --- | --- | --- |
-| `seenSeq` | 稳定语义 | GitHub 内容增量处理进度；正常重启不能因此重放已处理的 Issue Body / Comment 事件 |
-| `commands[]` | 稳定语义、内部字段可演进 | 已观察／认领命令的处理记录，用于去重、恢复与必要反馈 |
+| `issueBodyHandled` | 稳定语义 | 初始 Issue Body 是否已经作为一次性候选处理；正常重启不能重新触发同一个初始 Body |
+| `eligibleCommentWatermark` | 稳定语义 | 单一、只前进的评论水位：已观察到的最新 eligible 人类 Comment identity。新的授权普通回复即使不是命令也推进它；不得因删除、授权变化或重启回退到更旧评论 |
+| `lastTrigger` | 稳定语义、内部字段可演进 | 最近一次真正被认领的执行请求及其处理状态，用于恢复／必要反馈；只保存最近一次，不形成历史命令队列 |
 | `binding` | 稳定 Contract | 任务与执行机、工作目录、Harness session 的持久绑定；首次绑定前可为空 |
 | `lastRun` | 稳定语义、内部字段可演进 | 最近一次本机调用的技术结果与诊断入口；不代表业务结果 |
 | `inFlight` 等瞬时／恢复字段 | 实现 Schema | 可缓存任务内当前调用引用；机器级真实活跃调用以可恢复的运行态记录为准，字段名可演进，但不能破坏单写入者 Contract |
@@ -166,19 +165,28 @@ repositories
 | `createdAt` | 实现 Schema | 绑定创建时间，便于排查 |
 | 未来的已知 PR 标识 | 稳定语义 | 若实现保存 PR 绑定，必须属于同一“仓库 + Issue”任务；字段名由实现任务确定 |
 
-### `commands[]`
+### 触发进度与 `lastTrigger`
 
-命令记录至少要能回答“哪一个 GitHub 内容事件已经处理、是否真正启动、是否允许恢复／重试”，防止重复轮询或重启造成重复开发。Issue Body 与 Comment 都是正式触发入口，因此不能把幂等键固定成“评论 id”。
+V1 不保存同一 Issue 的历史命令队列。Trigger Contract 只需要三个很小的状态：
+
+1. `issueBodyHandled`：初始 Body 这个一次性入口是否已经处理；
+2. `eligibleCommentWatermark`：已经看到的最新 eligible 人类 Comment identity，只能向前；
+3. `lastTrigger`：最近一次真正被认领的执行请求，用于恢复和避免重复反馈。
+
+新的 eligible 人类 Comment 一旦被观察到，无论它是否以 `@<runnerName>` 结尾，都先推进 `eligibleCommentWatermark`。因此普通授权回复可以覆盖更早的命令，而旧命令不会因为更新评论被删除、授权配置变化或 Runner 重启而重新复活。
+
+有效命令一旦被认领并尝试启动即视为已消费；启动失败不自动重新执行同一个候选。需要再次执行时，由授权主体发布新的 eligible control comment。长期历史追溯写入 audit/run log，不在 `state.json` 中维护 `commands[]` 历史列表。
+
+`lastTrigger` 至少能表达：
 
 | 字段 | 稳定性 | 含义 |
 | --- | --- | --- |
 | `sourceType` | 稳定 Contract | `issue_body` 或 `comment`，区分触发来源 |
-| `sourceId` | 稳定 Contract | 对应 GitHub 内容事件的稳定身份；Comment 使用 comment id，Issue Body 使用能够唯一指向“新建 Issue Body 事件”的 GitHub identity |
+| `sourceId` | 稳定 Contract | 本次最近触发来源的稳定身份；Comment 使用 comment id，Issue Body 使用能够唯一指向初始 Body 的 identity |
 | `author` | 稳定语义 | 内容作者，用于审计／授权结果回查 |
-| `status` | 实现 Schema | 当前处理状态名称，例如 pending / claimed / running / failed 等；名称可随实现收敛 |
+| `status` | 实现 Schema | 最近触发的技术处理状态，例如 claimed / starting / running / failed；名称可随实现收敛 |
 | `at` / `finishedAt` | 实现 Schema | 本机处理时间 |
 | `feedbackSent` | 实现 Schema | 是否已经发送必要的 Runner 控制反馈，避免重复刷评论 |
-| `retryable` / 兼容标记 | 实现 Schema | 恢复判定所需的内部标记；不得因此无依据扩大自动恢复 Contract |
 
 ### `activeRuns` / Harness 运行态
 
@@ -216,7 +224,7 @@ Runner 重启后，对上次记录为 starting / running、但当前尚未确认
 下列语义属于长期 Contract，修改时先更新本文或相关 Current，再改运行代码：
 
 - 任务主键不再是“仓库 + Issue”；
-- 不再保存评论处理进度，或允许正常重启重放已处理命令；
+- 不再保存初始 Body 已处理状态或单调前进的 eligible Comment 水位，或允许正常重启／评论删除后重放已被覆盖的旧命令；
 - 不再持久化执行机、工作目录或 session 绑定；
 - 不再保存足以恢复活跃 Harness 调用和并发占用的技术运行态；
 - 允许目录／session 不匹配时静默换目录或新建会话；
@@ -227,7 +235,7 @@ Runner 重启后，对上次记录为 starting / running、但当前尚未确认
 
 在不破坏上述语义时，Implementer 可以直接调整：
 
-- `commands[]` 内部状态名称和诊断字段；
+- `lastTrigger` 内部状态名称和诊断字段；
 - `lastRun` 的附加诊断字段；
 - 时间戳、日志引用、缓存字段；
 - JSON 对象的内部组织方式；
