@@ -125,7 +125,7 @@ runner:mb01 + @dev
 - 如果最新 eligible comment 比水位更新、但不是命令：把水位推进到该 comment，不启动 Harness；
 - 运行期间夹在旧水位和当前最新评论之间的其他评论不排队、不逐条补执行。
 
-因此 V1 不需要 `pending`、`lastTrigger`、next-candidate 队列，也不需要在 Harness 运行期间维护“下一轮要做什么”。当前 Harness 结束以后再看 GitHub 当时的最新人类意图即可。
+Harness 运行期间的新回复不形成待执行队列。当前 Harness 结束以后，再看 GitHub 当时的最新人类意图即可。
 
 未授权用户的新评论不参与候选选择。Runner 自动生成的接单确认、启动失败等控制反馈统一以 `BOT:<runnerName>` 开头，因此直接排除，不参与 eligible control comment 选择。
 
@@ -158,7 +158,7 @@ Runner 采用增量发现，不在首次接入仓库时重放全部历史命令�
 
 每个 Issue 的触发状态保持最小化：一次性的 Body 处理状态、单调前进的 `eligibleCommentWatermark`，以及“这个 Issue 当前是否有 Harness 在运行/结果未知”的任务运行状态。Harness 真正的 session 历史仍由 Harness / `DSH_HOME` 管理。
 
-运行状态与评论水位的关系只有一条：**Issue 运行中，水位冻结；Issue 空闲后，下一次轮询才读取当前最新评论并决定是否推进水位和再次执行。** Runner 不保存运行期间出现的历史命令队列，也不保存“下一轮候选”。
+运行状态与评论水位的关系只有一条：**Issue 运行中，水位冻结；Issue 空闲后，下一次轮询才读取当前最新评论并决定是否推进水位和再次执行。** Runner 不保存运行期间出现的待执行命令；这些回复只在 Harness 结束后的下一次轮询中，以当时最新的一条为准。
 
 Runner 重启后，如果无法确认某个旧 Harness 是否已经退出，应继续把该 Issue 当作 active / unknown，先跳过它，直到进程探测或明确人工恢复动作得到确定结果；不能因为重启就重新读取新评论并启动第二个写入者。
 
