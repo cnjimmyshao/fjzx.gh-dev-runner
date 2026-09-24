@@ -33,7 +33,7 @@
 → Runner 本机记录启动、运行、结束与异常轨迹
 ```
 
-同一当前候选不重复执行，同一任务不同时启动两个写入者。任务正在执行时不能另开进程或会话抢写同一分支；Runner 空闲后重新读取当前最新 eligible control comment，不为更早的 `@<runnerName>` 评论维护 pending 队列。每个 Issue 只保存一个单调前进的 `eligibleCommentWatermark`，表示已经看到的最新 eligible 人类评论，不保存历史 pending 队列。若最新候选是命令，则同时用唯一的 `lastTrigger(status=observed)` 保存这一个尚未启动的当前候选；真正启动前先把它持久化为 `starting`，此时才算消费。这样 Runner 在观察与启动之间崩溃也不会丢命令。新的授权普通回复会推进水位并覆盖更旧的 observed 候选；启动失败不自动重试已消费候选。具体机器级／仓库级容量与领取规则由调度 Contract 负责。多台电脑的 Runner 名称由部署者保持唯一，不建设分布式选主。
+同一当前候选不重复执行，同一任务不同时启动两个写入者。任务正在执行时不能另开进程或会话抢写同一分支；Runner 仍可继续观察新的授权评论，但只保留一个“下一步候选”，不维护 pending 队列。每个 Issue 用单调前进的 `eligibleCommentWatermark` 表示评论看到哪里；`lastTrigger(status=observed)` 只保存当前唯一、尚未开始的候选。真正启动前，Runner 必须把该 trigger 原子转入独立的 `activeRuns(status=starting)` 并消费 `lastTrigger`，之后 starting/running/unknown 的恢复状态只由 `activeRuns` 保存。新的授权普通回复会推进水位并清除尚未开始的 Body/Comment 候选；新的命令回复会替换成最新候选，但都不得覆盖已经存在的 active run。当前 active run 结束后再重新核对最新候选并决定是否启动下一轮。启动失败不自动重试已消费候选。具体机器级／仓库级容量与领取规则由调度 Contract 负责。多台电脑的 Runner 名称由部署者保持唯一，不建设分布式选主。
 
 ## 会话与工作目录
 
