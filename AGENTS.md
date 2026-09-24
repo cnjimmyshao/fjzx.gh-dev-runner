@@ -67,9 +67,11 @@ Requirement 与 Implementation 分开；实现建议可写，但未批准的方�
 
 ## 代码与文档同步
 
-先核对相关 Current。实现补齐既有要求时不制造无意义文档 diff；长期行为、接口或保障范围改变时，同一 PR 同步 `docs/current/`。重要且易反复争论的取舍记录 ADR；新的外部事实或本机实测按 Research 规则留证。
+先核对相关 Current。Implementation 只是落实已经合并的 Contract 时，不制造无意义文档 diff；可以在同一 Implementation PR 中同步与该实现直接相关、但**不改变 Contract**的实现说明、示例、开发文档或链接。
 
-Issue 中获批的新长期规则需要落实到 Current，不留待未来补写。不得为通过审查而反向降低需求、删除有效测试或把既有承诺改称不支持。Current 的目标 Contract 不等于功能已经实现；实现和验证状态必须如实说明。
+如果实现过程中发现必须改变长期 Requirement、Contract、职责边界、运行流程、接口、权限、对外行为保证或验收语义，不在当前 Implementation PR 中顺手修改 Current 来制定新规则。应回到关联 Issue 说明原因与影响，先通过独立的 documentation-only PR 更新对应 Current、AGENTS 或必要 ADR，并在该文档 PR Review / Merge 后，再回到 Implementation PR 继续实现。重要且易反复争论的取舍记录 ADR；新的外部事实或本机实测按 Research 规则留证。
+
+Issue 中获批的新长期规则必须通过上述独立文档 PR 落实并先合并，不能留待未来补写，也不能由 Implementation PR 先行生效。不得为通过审查而反向降低需求、删除有效测试或把既有承诺改称不支持。Current 的目标 Contract 不等于功能已经实现；实现和验证状态必须如实说明。
 
 ## Code Review Rules
 
