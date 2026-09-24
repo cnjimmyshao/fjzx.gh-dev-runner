@@ -85,6 +85,7 @@ export function makeHarnessExec({
   exitCode = 0,
   status = { kind: 'completed' },
   spawnThrows = null,
+  reportedSessionId = ({ sessionId }) => sessionId,
 } = {}) {
   const runs = [];
   const exec = async (options) => {
@@ -104,7 +105,12 @@ export function makeHarnessExec({
     if (options.capture === 'file' && (options.stdoutFile === undefined || options.stderrFile === undefined)) {
       throw new Error('capture=file 需要同时给出 stdoutFile 与 stderrFile');
     }
-    const sessionId = requestedSession ?? newSessionId();
+    const selectedSessionId = requestedSession ?? newSessionId();
+    const sessionId = reportedSessionId({
+      requestedSession,
+      sessionId: selectedSessionId,
+      runIndex: runs.length,
+    });
     run.sessionId = sessionId;
     runs.push(run);
     const stdout = [
