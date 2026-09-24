@@ -78,6 +78,11 @@ function sinceStart(epochMs) {
   return t0 === null ? null : Math.round(epochMs - t0);
 }
 
+/** birthtime 不可用时保留 null，让报告能区分「不可用」与真实的 0ms。 */
+function sinceStartOrNull(epochMs) {
+  return epochMs === null ? null : sinceStart(epochMs);
+}
+
 /** --C-Users-x-Temp-y-- → …-Temp-y，避免把完整本机路径写进报告。 */
 function slugOf(dirName) {
   const parts = dirName.replace(/^--/, '').replace(/--$/, '').split('-');
@@ -88,8 +93,7 @@ function maskId(id) {
   return typeof id === 'string' && id.length > 12 ? `${id.slice(0, 12)}…` : (id ?? null);
 }
 
-/** 会话目录下的一级子目录就是会话标识；目录不可读时返回空列表。 */
-function listSessionIds(root, slug) {
+/** 会话目录下的一级子目录就是会话标识；目录不可读时返回空列表。 */function listSessionIds(root, slug) {
   try {
     return readdirSync(join(root, slug), { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
@@ -99,17 +103,28 @@ function listSessionIds(root, slug) {
   }
 }
 
-/** 会话头里的 createdAt 是「会话被创建」的权威时刻，比目录轮询更精确。 */
+/**
+ * 会话头里的 createdAt 是「会话被创建」的权威时刻，比目录轮询更精确。
+ * birthtime 在部分文件系统上不可用（可能为 0），此时不把它当成时刻。
+ */
+function safeBirthtimeMs(path) {
+  try {
+    const value = statSync(path).birthtimeMs;
+    return Number.isFinite(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 function readSessionHeader(slug, sessionId) {
   try {
     const file = join(DSH_HOME, 'sessions', slug, sessionId, 'session.v3.jsonl.zstd');
     const header = JSON.parse(zstdDecompressSync(readFileSync(file)).toString('utf8').split('\n')[0]);
-    const info = statSync(file);
     return {
       createdAt: header.createdAt,
       createdAtSinceStart: sinceStart(header.createdAt),
-      fileBirthSinceStart: sinceStart(info.birthtimeMs),
-      fileWriteSinceStart: sinceStart(info.mtimeMs),
+      fileBirthSinceStart: sinceStartOrNull(safeBirthtimeMs(file)),
+      fileWriteSinceStart: sinceStart(statSync(file).mtimeMs),
       dirMatchesId: header.id === sessionId,
     };
   } catch {
@@ -117,52 +132,25 @@ function readSessionHeader(slug, sessionId) {
   }
 }
 
-/** 文件系统给不出创建时刻时，用这个容差判断会话是否早于本轮启动。 */
-const SESSION_START_TOLERANCE_MS = 2000;
-
 function startObservers() {
   const root = join(DSH_HOME, 'sessions');
   mkdirSync(root, { recursive: true });
-  // 一级目录是工作目录 slug，新会话是它下面新出现的 session 子目录；两者分别快照，
-  // 这样同一个 DSH_HOME + 工作目录连续跑多次也能逐次读到新建会话。
+  // 一级目录是工作目录 slug，新会话是它下面新出现的 session 子目录。启动时（spawn 之前）
+  // 先快照一次：快照里已有的 slug 与会话就是「上一次运行留下的」，不再靠创建时刻或时序
+  // 猜测——文件系统给不出可靠 birthtime 时，那些推断会把本轮新会话误判成旧会话。
   const knownSlugs = new Set(readdirSync(root));
   const knownSessions = new Map();
-  const pending = new Map();
-  /**
-   * 之前几次运行留下的会话目录会在第一次扫描时就被看到，不能当成「本轮创建」。
-   * 判定顺序：目录／会话文件的创建时刻明确早于本轮 t0 → 旧会话；两者都拿不到
-   * （文件系统不提供 birthtime）时用下面的容差兜底。
-   */
-  const isPreExisting = (slug, sessionId) => {
-    const dir = join(root, slug, sessionId);
-    let dirBirth = null;
-    let fileBirth = null;
-    try {
-      dirBirth = statSync(dir).birthtimeMs;
-      fileBirth = statSync(join(dir, 'session.v3.jsonl.zstd')).birthtimeMs;
-    } catch { /* 文件还没写出来 */ }
-    const known = [dirBirth, fileBirth].filter((value) => value !== null && Number.isFinite(value));
-    if (known.length === 0) return Date.now() - t0 < SESSION_START_TOLERANCE_MS;
-    return Math.min(...known) < t0;
-  };
-  // 启动前就存在的 slug 及其会话全部标记为旧；新 slug 从空集合开始观察，
-  // 否则「slug 与 session 子目录在第一次扫描前都已创建」时会把首个会话吞掉。
-  for (const slug of knownSlugs) {
-    for (const sessionId of listSessionIds(root, slug)) {
-      if (isPreExisting(slug, sessionId)) pending.set(`${slug}/${sessionId}`, 'pre-existing');
-    }
-  }
+  for (const slug of knownSlugs) knownSessions.set(slug, new Set(listSessionIds(root, slug)));
   const observeSlug = (slug) => {
     if (knownSlugs.has(slug)) return;
     knownSlugs.add(slug);
     knownSessions.set(slug, new Set());
     mark('session-slug-created', { slug: slugOf(slug) });
   };
-  const headerOf = (slug, sessionId) => `${slug}/${sessionId}`;
   const observeSession = (slug, sessionId) => {
     const known = knownSessions.get(slug) ?? new Set();
     if (known.has(sessionId)) {
-      // 目录先出现、会话文件后写完：补读上一次还读不到的会话头。
+      // 已经见过的会话：目录先出现、会话文件后写完时，补读上一次还读不到的会话头。
       const event = events.find((item) => item.name === 'session-created' && item.header === null
         && item.sessionId === maskId(sessionId) && item.slug === slugOf(slug));
       if (event !== undefined) event.header = readSessionHeader(slug, sessionId);
@@ -170,22 +158,16 @@ function startObservers() {
     }
     known.add(sessionId);
     knownSessions.set(slug, known);
-    if (pending.get(headerOf(slug, sessionId)) === 'pre-existing' || isPreExisting(slug, sessionId)) {
-      pending.set(headerOf(slug, sessionId), 'pre-existing');
-      return;
-    }
     const dir = join(root, slug, sessionId);
-    let dirBirthSinceStart = null;
     let files = [];
     try {
       files = readdirSync(dir);
-      dirBirthSinceStart = sinceStart(statSync(dir).birthtimeMs);
     } catch { /* 目录刚创建，忽略 */ }
     mark('session-created', {
       slug: slugOf(slug),
       sessionId: maskId(sessionId),
       files,
-      dirBirthSinceStart,
+      dirBirthSinceStart: sinceStartOrNull(safeBirthtimeMs(dir)),
       header: readSessionHeader(slug, sessionId),
     });
   };
