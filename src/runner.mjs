@@ -254,7 +254,7 @@ export function createRunner({ config, gh, exec, log = () => {}, env = {} }) {
       return { kind: 'failed', detail: message };
     }
 
-    if (outcome.sessionId !== null && outcome.sessionId !== sessionId) binding.sessionId = outcome.sessionId;
+    // 只有首轮尚无身份时接受 Harness 返回的新 sessionId；续接若返回不同 id，harness 判读会失败，不能改写既有绑定。\n    if (sessionId === null && outcome.sessionId !== null) binding.sessionId = outcome.sessionId;
     const completed = outcome.exitCode === 0 && outcome.statusKind === 'completed';
     entry.lastRun = {
       at: new Date().toISOString(),
