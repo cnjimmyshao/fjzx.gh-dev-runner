@@ -22,10 +22,33 @@ runnerName = MB01
 
 ## 命令语法
 
-Runner 检查：
+Runner 只在**授权主体**能够表达 Runner 控制意图的位置检查命令：
 
-- 新建 Issue 的正文；
-- 已有 Issue 后续新增的普通 Issue 评论正文。
+- 由授权主体创建的新建 Issue 的初始正文；
+- 已有 Issue 中当前最新一条 **eligible control comment**。
+
+eligible control comment 指：作者属于该仓库配置允许触发 Runner 的授权主体，并且该评论不是 Runner 自己生成的接单确认、启动失败等控制反馈。
+
+V1 规定：**一个 Issue 的当前 task binding 只归一个 Runner**。正常流程中不会让 MB01、HZ01 等多个 Runner 同时处理同一个 Issue；如需换 Runner，必须先由维护者明确完成任务绑定迁移，而不是靠多台机器同时竞争评论。
+
+所有 Runner 自动生成的 GitHub 控制反馈统一使用保留前缀：
+
+```text
+BOT:<runnerName>
+```
+
+例如：
+
+```text
+BOT:MB01
+MB01 已接单，Session ID: <session-id>
+```
+
+任何 trim 后以 `BOT:` 开头的评论都属于 Runner 控制反馈，永远不参与 eligible control comment 选择。该前缀只供 Runner 自动反馈使用，人工控制评论不使用它。这样不依赖本机 comment-id 共享，也不需要多个 Runner 互相同步状态。
+
+未授权用户的评论和 `BOT:` 控制反馈可以正常存在于 Issue 中，但它们不参与“当前候选”的选择，也不能覆盖授权主体已经留下的当前控制意图。
+
+V1 不把同一 Issue 的所有历史评论都当成待执行命令队列。Issue Body 是一次性的初始触发候选；进入评论阶段后，只以**当前最新一条 eligible control comment**作为触发候选。
 
 对正文做首尾空白清理（trim）后，如果正文以：
 
@@ -76,29 +99,54 @@ runner:mb01 + @dev
 
 未来只有在实际出现“先路由给机器、但暂时不执行”或更复杂跨机调度需求时，才重新讨论是否拆分这两个概念。
 
-## Issue Body 与 Comment
+## Issue Body 与最新 Comment
 
-新建 Issue 时，如果 Issue Body 满足命令规则，可直接请求对应 Runner 开始工作，不要求再补一条单独评论。
+新建 Issue 时，如果 Issue 创建者属于授权主体，且**初始 Issue Body**满足命令规则，可直接请求对应 Runner 开始工作，不要求再补一条单独评论。该 Body 只作为一次性的初始触发候选；处理后不因后续重复扫描或编辑再次触发。
 
-已有 Issue 中，每一条后续新增的普通 Issue 评论都作为独立内容事件检查。**不是“有新回复就触发”**；只有该条评论自身在 trim 后以 `@<runnerName>` 结尾，才表示现在开始或继续该 Issue 的工作。
+已有 Issue 进入评论阶段后，V1 **只检查当前最新一条 eligible control comment**。只有这条候选自身在 trim 后以 `@<runnerName>` 结尾，并且其 comment identity 高于本任务已经记录的候选水位，才表示现在开始或继续该 Issue 的工作。
 
-因此，人和 Dev 可以在同一个 Issue 中正常来回讨论。Dev 回报问题或结果后，维护者阅读并回复；只有当维护者希望 Runner 再次工作，并在这条新回复最后明确写上例如 `@MB01` 时，MB01 才再次被激活。
+更早的 eligible control comment 即使以 `@<runnerName>` 结尾，也不排队、不补执行。Runner 不维护同一 Issue 内的 pending comment / pending execution-request 队列。
 
-同一个 Issue 在整个生命周期内可以多次出现新的有效 `@<runnerName>` 命令：
+未授权用户的新评论不参与候选选择，因此不能取消或覆盖授权主体的控制请求。Runner 自动生成的接单确认、启动失败等控制反馈统一以 `BOT:<runnerName>` 开头，因此所有 Runner 都可以直接识别并排除，不依赖评论作者或本机保存的 comment identity。
 
-- 第一次有效命令创建任务绑定并启动新 Harness session；
-- 后续新的有效评论表示继续原任务绑定，由会话层恢复原工作目录和原 session；
-- 不以 `@<runnerName>` 结尾的普通回复、讨论、Dev 回报或其他状态变化都不会触发 Runner。
+因此，人和 Dev 可以在同一个 Issue 中正常来回讨论。授权维护者阅读并回复后，**最新一条授权主体的普通人类评论**代表当前控制意图：如果它最后明确写上例如 `@MB01`，MB01 被激活；如果它是普通讨论而没有命令，则更早的 `@MB01` 自然失效。
 
-同一 GitHub 内容事件即使正文中多次出现相同命令，也只作为一个事件处理；去重依据是 GitHub 内容事件本身，而不是命令文字出现次数。
+如果 Runner 忙碌期间曾出现一条以 `@MB01` 结尾的 eligible control comment，但在 Runner 再次准备启动工作前又出现了更新的 eligible control comment，则重新读取当前候选：
+
+- 当前候选仍是原来的 `@MB01` 评论：可以执行；
+- 当前候选已经是授权主体的普通讨论：旧 `@MB01` 自然失效，不补执行；
+- 当前候选是授权主体另一条新的 `@MB01`：只执行最新这一条；
+- 期间出现的未授权评论或 Runner 控制反馈：忽略，不改变当前候选。
+
+同一 Issue 仍绑定同一 task / workspace / session / Runner。第一次有效触发建立任务绑定并 START；后续当前候选再次有效时 RESUME 原任务绑定。V1 不让另一台 Runner 在该绑定仍有效时同时接管同一 Issue。
+
+Runner 对每个 Issue 只维护一个**单调前进的评论水位**（逻辑名可记为 `eligibleCommentWatermark`）：它就是“这个 Issue 已经观察到的最新一条 eligible 人类评论 identity”。不保存历史评论队列。
+
+当出现新的 eligible 人类评论时，Runner 先判断它是不是命令，然后用一次原子状态更新推进水位：
+
+- 如果只是普通授权回复：只推进 `eligibleCommentWatermark`；它立即覆盖更早候选。
+- 如果是以 `@<runnerName>` 结尾的命令：推进 `eligibleCommentWatermark` 的同时，把同一个 source identity 写入唯一的 `lastTrigger`，初始状态记为 `observed`。这表示“最新命令已经看见，但还没有开始尝试启动”。
+
+因此即使 Runner 在“看到命令”与“真正启动 Harness”之间崩溃，重启后仍可由 `eligibleCommentWatermark + lastTrigger(status=observed)` 恢复这一个当前候选，不会静默丢失，也不需要 pending 队列。
+
+水位只往前，不因评论删除、授权配置变化、重启或 API 返回集合变化而后退。被后续普通授权回复覆盖掉的旧 `@MB01` 不会在未来重新复活。
+
+一次有效命令从 `lastTrigger.status=observed` 进入 `starting`（或等价的“开始尝试启动”状态）时才算被消费。Runner 必须在真正启动子进程前先持久化这个状态转换。若只停留在 `observed` 就崩溃，重启后可以继续处理这一个仍为当前水位的候选；若已经进入 `starting`，则不得把同一候选当成全新的命令再次执行，而应按运行恢复规则核对实际启动结果。
+
+Harness 启动／续接明确失败后，该候选保持已消费，不自动重试；Runner 发布一次 `BOT:<runnerName>` 失败反馈后，等待授权主体发布新的 eligible control comment，或由维护者执行明确的人工恢复动作。
+
+同一个当前候选即使正文中多次出现相同命令，也只作为一次触发处理；同一 Issue Body 或同一 eligible control comment 不能因正常轮询、重启或重复读取而重复执行。
 
 ## 匹配规则
 
 V1 保持简单：
 
-1. 读取正文原文；
-2. 对正文执行 trim；
-3. 检查是否以 `@${runnerName}` 结尾。
+1. 先排除 trim 后以 `BOT:` 开头的 Runner 自动反馈；
+2. 确认候选来源具备授权：Issue Body 的创建者是授权主体；Comment 的作者是授权主体；
+3. 读取候选正文原文并执行 trim；
+4. 检查是否以 `@${runnerName}` 结尾；
+5. 用一次原子状态更新推进 `eligibleCommentWatermark`；若它是命令，同时把该 identity 写入唯一的 `lastTrigger` 并置为 `observed`；
+6. 只有准备实际启动时，才把当前 `lastTrigger` 从 `observed` 转为 `starting`，然后启动 Harness。
 
 V1 不解析 GitHub 的真实 mention，不依赖通知事件，也不为了 Markdown 引用、代码块等情况建设额外语法解析器。
 
@@ -106,7 +154,7 @@ V1 不解析 GitHub 的真实 mention，不依赖通知事件，也不为了 Mar
 
 Runner 采用增量发现，不在首次接入仓库时重放全部历史命令。
 
-同一 Issue Body 或同一 Comment 不应因正常轮询、重启或重复读取而被重复执行；后来出现其他状态变化也不能让旧的 `@<runnerName>` 重新生效。
+Runner 需要知道初始 Body 是否已经处理，并为每个 Issue 保存一个单一的 `eligibleCommentWatermark`，表示已经观察到的最新 eligible 人类评论 identity；不需要保存历史评论队列。若这个最新候选是命令，则唯一的 `lastTrigger` 保存同一个 source identity 及其 `observed / starting / ...` 状态：`observed` 表示尚未消费，进入 `starting` 后才表示已开始尝试并按运行恢复规则处理。Runner 自动反馈通过 `BOT:` 保留前缀直接识别，不要求跨机器共享 comment-id 列表。评论水位不得因评论删除、授权配置变化或重启向后移动；旧 eligible control comment 一旦被更新的人类候选覆盖，就不能在以后重新补执行。
 
 具体水位与持久化结构由本地状态 Contract 负责，但不能改变这里定义的用户可见触发语义。
 
@@ -115,10 +163,11 @@ Runner 采用增量发现，不在首次接入仓库时重放全部历史命令�
 Runner 在真正认领一次命令、成功启动或续接 Harness 并取得本次绑定的 sessionId 后，只在原 Issue 回复一次接单确认，例如：
 
 ```text
+BOT:MB01
 MB01 已接单，Session ID: <session-id>
 ```
 
-这条回复只表示本次命令已由 MB01 接管，并已经进入对应 Harness session；不表示开发任务已经完成。
+这条回复只表示本次命令已由 MB01 接管，并已经进入对应 Harness session；不表示开发任务已经完成。所有 Runner 控制反馈统一以 `BOT:<runnerName>` 开头，因此永远不参与“当前 eligible control comment”的选择。
 
 正常执行过程中，Runner 不持续在 GitHub 刷新进度；Harness / Dev 的分析、问题、结果、PR 与后续工作状态由 Dev 按目标项目规则直接 POST 到 Issue / PR。
 
@@ -127,6 +176,7 @@ MB01 已接单，Session ID: <session-id>
 如果 Runner 无法正常启动或续接 Harness，导致本轮 Dev 根本没有进入可工作的 session，则 Runner 必须在原 Issue 留下一条简短失败回复，例如：
 
 ```text
+BOT:MB01
 MB01 启动 Harness 失败，请检查本机 Runner / Harness 状态。
 ```
 
@@ -167,7 +217,7 @@ GitHub 只保留上述最小人类可见反馈；Runner 本机必须保留完整
 
 - Runner / Harness 配置文件的具体格式；
 - 机器级和仓库级并发；
-- pending / running 等调度状态；
+- 当前任务 running / capacity 等调度状态；
 - task binding、worktree 与 session 的具体 Schema；
 - START / RESUME 交给 Harness 的消息内容；
 - Harness / Dev 如何完成业务开发和汇报结果。
@@ -191,10 +241,11 @@ Issue Body：
 Runner 识别并成功拉起 Harness 后回复：
 
 ```text
+BOT:MB01
 MB01 已接单，Session ID: abc123
 ```
 
-随后同一 Issue 中的新评论：
+随后同一 Issue 中，授权主体发布的**当前最新 eligible control comment**：
 
 ```text
 Review 已经有结果，请继续处理剩余问题。
@@ -202,4 +253,4 @@ Review 已经有结果，请继续处理剩余问题。
 @MB01
 ```
 
-该评论表示再次执行；Runner 续接原任务绑定 / session，成功后仍只回复一次接单确认，后续实际工作结果由 Dev 自己回报。
+如果它在 Runner 准备执行时仍是当前最新评论，则表示再次执行；Runner 续接原任务绑定 / session。若它后来被新的普通评论覆盖，则不再补执行。成功后仍只回复一次接单确认，后续实际工作结果由 Dev 自己回报。

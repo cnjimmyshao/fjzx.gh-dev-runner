@@ -44,9 +44,9 @@
 
 ## 后续最小实现
 
-CLI 验证确认可用后，再写明确的实施 Issue：少量本机配置与凭据保存、通过 `gh` 增量发现新建 Issue Body 与后续新增 Issue 评论、按 `runnerName` 识别执行请求、去重及任务绑定、CLI 启动／续接、必要日志与反馈。实现时必须同时覆盖两类正式触发入口，不能只轮询 comments 而漏掉“新建 Issue 的 Body 末尾直接写 `@<runnerName>`”的情况。新增文件按实际职责组织，不预建 Scheduler、Repository、Adapter 等整套层次。
+CLI 验证确认可用后，再写明确的实施 Issue：少量本机配置与凭据保存、通过 `gh` 读取新建 Issue Body 与当前最新 eligible control comment、按 `runnerName` 识别当前触发候选、去重及任务绑定、CLI 启动／续接、必要日志与反馈。一个 Issue 的当前 task binding 只归一个 Runner。实现时必须同时覆盖两类正式候选：创建时授权主体的一次性初始 Body，以及已有评论后“授权主体发布且不以保留前缀 `BOT:` 开头”的当前最新评论；不为同一 Issue 的历史 `@<runnerName>` 评论建设 pending 队列。Runner 自动反馈统一写成 `BOT:<runnerName>` 前缀。新增文件按实际职责组织，不预建 Scheduler、Repository、Adapter 等整套层次。
 
-GitHub 资料入口：[gh api](https://cli.github.com/manual/gh_api)、[Issues API](https://docs.github.com/en/rest/issues/issues)、[Issue comments API](https://docs.github.com/en/rest/issues/comments)。后续按实际接口核对分页、更新时间和限流；对每个新内容事件独立读取正文、trim 并检查是否以当前机器的 `@<runnerName>` 结尾。普通回复本身不触发，只有该条新 Body / Comment 满足结尾规则才触发。验证初次启动与普通重启不会重放历史命令，不靠不断创建 Actions run 检查状态。
+GitHub 资料入口：[gh api](https://cli.github.com/manual/gh_api)、[Issues API](https://docs.github.com/en/rest/issues/issues)、[Issue comments API](https://docs.github.com/en/rest/issues/comments)。后续按实际接口核对分页、更新时间和限流；Runner 每次准备启动工作时重新确认当前最新 eligible control comment，先排除 `BOT:` 自动反馈，再核对作者授权，只对当前候选执行 trim + `@<runnerName>` 结尾判断。每个 Issue 只保存一个单调前进的 `eligibleCommentWatermark`：它表示已经看到的最新 eligible 人类评论 identity，不保存历史 pending comment 队列。若最新候选是命令，推进水位时同时把唯一的 `lastTrigger` 置为 `observed`；只有准备真正启动时才先持久化为 `starting`，然后 spawn Harness。重启时 `observed` 且 sourceId 等于当前水位的候选仍可继续处理，`starting` 则进入运行恢复而不是当作新命令重跑。新的授权普通回复会推进水位并覆盖旧候选；明确启动失败后不自动重试已消费候选。验证这些语义不会因普通轮询或重启重复执行，不靠不断创建 Actions run 检查状态。
 
 ## 验证分层
 
