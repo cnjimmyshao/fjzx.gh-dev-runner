@@ -258,7 +258,8 @@ function spawnChild(args, env, extra) {
   child = launched;
   mark('spawn-called', { pid: launched.pid });
   launched.on('error', (error) => {
-    mark('child-spawn-error', { message: String(error.message).slice(0, 200) });
+    // error.message 常带 Node 可执行文件或工作目录的绝对路径，报告里只留错误码。
+    mark('child-spawn-error', { code: error.code ?? null, stage: 'spawn' });
     // spawn 失败不会有 exit 事件；不在这里结算，waitExit() 会一直等到超时。
     if (childExitedAt === null) {
       childExitedAt = Date.now() - t0;
@@ -270,24 +271,34 @@ function spawnChild(args, env, extra) {
     exitCode = code;
     mark('child-exit', { code });
   });
+  launched.on('close', (code) => {
+    if (childExitedAt === null) childExitedAt = Date.now() - t0;
+    if (exitCode === null && typeof code === 'number') exitCode = code;
+  });
   return launched;
 }
 
 function waitExit() {
   return new Promise((resolve) => {
     if (child === null || childExitedAt !== null) return resolve();
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      setTimeout(resolve, 40);
+    };
     const timer = setTimeout(() => {
       timedOut = true;
       mark('probe-timeout', { timeoutMs });
       child.kill('SIGKILL');
-      // 子进程可能根本没起来（spawn 失败）或杀不掉，不能只等 exit。
+      // 子进程可能根本没起来（spawn 失败）或杀不掉，不能只等事件。
       if (childExitedAt === null) childExitedAt = Date.now() - t0;
-      setTimeout(resolve, 50);
+      finish();
     }, timeoutMs);
-    child.on('exit', () => {
-      clearTimeout(timer);
-      setTimeout(resolve, 40);
-    });
+    // exit 在 spawn 失败时不会触发，close 一定会；两者都结算。
+    child.on('exit', finish);
+    child.on('close', finish);
   });
 }
 
@@ -426,6 +437,8 @@ async function runAcp() {
   while (sessionId === null && Date.now() < deadline && childExitedAt === null) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+  // 子进程可能在上一次轮询之后写出响应并立即退出；判定「未观察到」之前再读一次。
+  drain();
   if (sessionId === null) mark('sessionId-not-observed');
   clearInterval(tick);
   // 会话在 session/new 阶段就已创建并落盘；本轮不再投递 prompt，直接结束子进程。
@@ -445,7 +458,7 @@ try {
   else if (mode === 'acp-new-only') await runAcp();
   else throw new Error(`unknown mode: ${mode}`);
 } catch (error) {
-  mark('probe-error', { message: String(error.message).slice(0, 300) });
+  mark('probe-error', { code: error.code ?? null, name: error.name ?? null, messageBytes: String(error.message ?? '').length });
   if (child && childExitedAt === null) child.kill('SIGKILL');
 } finally {
   await new Promise((resolve) => setTimeout(resolve, 60));
