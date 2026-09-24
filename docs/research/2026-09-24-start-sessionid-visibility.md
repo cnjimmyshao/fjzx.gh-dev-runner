@@ -31,7 +31,7 @@ Status: VERIFIED（范围限本文记录的时间、版本、电脑、调用路�
 时间基准与精度：
 
 - 父进程在 `spawn()` 前一瞬记录 `t0`（`spawn-called` 事件实测在 7–10ms）；
-- 会话创建时刻取会话头 `session.v3.jsonl.zstd` 的 `createdAt`（毫秒 epoch），并以目录／文件 `birthtime` 交叉核对，两者相差 18–29ms（同一批样本）；
+- 会话创建时刻取会话头 `session.v3.jsonl.zstd` 的 `createdAt`（毫秒 epoch），并以目录／文件 `birthtime` 交叉核对：目录比 `createdAt` 晚 13–20ms，会话文件再晚 1–14ms（最晚合计 34ms）；无凭据那个失败样本的文件 `birthtime` 晚 69ms，因为该轮先失败、文件后写；
 - 输出可见时刻取 stdout／stderr 文件的 mtime，扫描间隔为 5ms；
 - **扫描间隔不是精度上界**：Node 事件循环与文件系统调度都不保证回调按时运行，本批样本里「写入 mtime → 被观察到」的差值为 1–22ms。因此表里的可见时刻是「不早于实际写入」的观测值，逐次误差由日志里的 `mtime` 字段给出，不要把它当成固定 5–10ms 的保证；
 - 会话创建时刻在热 profile 下的分布：路径 A 三次分别 1534／1546／1661ms，路径 B 两次 1531／1588ms（同批样本极差 <200ms）；路径 B 的冷 profile 首次建链接样本（20503ms）不计入该比较，它是启动器建 profile 链接的耗时。
@@ -75,7 +75,7 @@ node docs\research\probes\start-sessionid-timing-probe.mjs acp-new-only   <独�
 | 无凭据（`MISSING_CREDENTIAL`） | 1585 | 1610／1654 | 1599（调试行）、1662（错误行） | 1662（result JSON） | 1758（父进程读到，实测写入 1662） | 1758 | 1710 | 1 |
 | 续接不存在的会话 | 不适用（未创建） | — | 1556（`session … not found`） | 无（stdout 为空） | 无 | 无 | 1604 | 1 |
 
-（会话创建时刻以会话头 `createdAt` 为准；`createdAt` 与目录／文件 `birthtime` 两种口径相差 18–24ms，无凭据那行的文件 `birthtime` 偏差更大（69ms），因为该轮先失败、文件后写。无凭据那一行取自更早一批样本：该轮的会话目录与文件时刻为 1610／1654ms，stdout 在 1662ms 写出带 `sessionId` 的 result JSON——失败路径同样先写 stdout 再写结果文件，所以这一行与同批「第 1／2 次」的 stdout 时点不可直接比较。）
+（会话创建时刻以会话头 `createdAt` 为准。`createdAt`→目录 `birthtime` 的偏差为 18／19／20ms，→会话文件 `birthtime` 再晚 7／8／8ms（合计 26／27／28ms）；无凭据那行的文件 `birthtime` 偏差更大（69ms），因为该轮先失败、文件后写。无凭据那一行取自更早一批样本：该轮的会话目录与文件时刻为 1610／1654ms，stdout 在 1662ms 写出带 `sessionId` 的 result JSON——失败路径同样先写 stdout 再写结果文件，所以这一行与同批「第 1／2 次」的 stdout 时点不可直接比较。）
 
 结论：
 
