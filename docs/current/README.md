@@ -5,6 +5,7 @@ Current Version: 未编号（版本编号由维护者决定）
 **状态：目标 Contract 已调整为 headless CLI；本机 CLI 首轮执行与同会话续接已实测通过，接单功能尚未实现。** 此处不是安装指南或上线声明；本机验证只对报告记录的版本、环境与命令成立。
 
 - [范围与工作链路](01-scope-and-flow.md)
+- [Runner → Dev 唤醒消息协议](02-dev-invocation-protocol.md)
 - [开发环境与验证结果](../development.md)
 - [架构取舍](../decisions/README.md)
 
