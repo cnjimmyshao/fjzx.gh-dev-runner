@@ -71,13 +71,11 @@ function fakeGh({ failRead = null, issues = [] } = {}) {
 function writeConfig(root, { stateDir, taskDir, machineId = 'mb01' }) {
   const configPath = join(root, 'config.json');
   mkdirSync(join(root, 'bin'), { recursive: true });
-  writeFileSync(join(root, 'bin', 'patch.yml'), '# overlay\n', 'utf8');
   writeFileSync(join(root, 'bin', 'bin.js'), '// 占位入口\n', 'utf8');
   writeFileSync(configPath, `${JSON.stringify({
     machineId,
     harness: {
       bin: join(root, 'bin', 'bin.js'),
-      patch: join(root, 'bin', 'patch.yml'),
       node: process.execPath,
       timeoutMs: 60000,
     },

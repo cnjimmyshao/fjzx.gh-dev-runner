@@ -40,6 +40,27 @@ test('缺省 file 捕获：子进程输出写到指定文件，调用结束后�
   assert.equal(readFileSync(join(root, 'logs', 'stderr.log'), 'utf8'), 'err-1\n');
 });
 
+test('任务正文可通过 stdin 传给子进程，同时保留 file 捕获', async (t) => {
+  const root = makeTempDir();
+  t.after(() => cleanup(root));
+  const child = writeChild(root, 'stdin.mjs', [
+    'process.stdin.setEncoding("utf8");',
+    'let text = "";',
+    'process.stdin.on("data", (chunk) => { text += chunk; });',
+    'process.stdin.on("end", () => process.stdout.write(text));',
+  ].join('\n'));
+
+  const result = await execFileAsync({
+    command: process.execPath,
+    args: [child],
+    stdin: '任务正文，不进入命令行参数',
+    stdoutFile: join(root, 'stdout.log'),
+    stderrFile: join(root, 'stderr.log'),
+  });
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout, '任务正文，不进入命令行参数');
+});
+
 test('file 捕获同样能带回非零退出码与错误输出', async (t) => {
   const root = makeTempDir();
   t.after(() => cleanup(root));

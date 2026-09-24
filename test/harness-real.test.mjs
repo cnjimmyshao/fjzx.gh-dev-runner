@@ -2,7 +2,6 @@ import { strict as assert } from 'node:assert';
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 import { loadConfig } from '../src/config.mjs';
@@ -11,21 +10,15 @@ import { runHarness } from '../src/harness.mjs';
 import { cleanup, makeTempDir } from './helpers.mjs';
 
 /**
- * 真实 Harness CLI 的失败路径：不调用模型、不需要凭据。
+ * 真实 Harness 的无模型失败路径。
  *
- * 用真实安装的 `dsh` 启动 headless profile + 本地 overlay，续接一个不存在的会话标识。
- * 期望：退出码 1、结果里不出现新会话标识、失败原因能从本机日志读到（即「不会静默新建
- * 会话」且「失败可见」）。这同时核对 `runHarness` 的调用形态与缺省 file 捕获在本机
- * 真实安装上确实可用。
- *
- * 找不到 dsh 安装、或环境不允许启动子进程时跳过（跳过 ≠ 通过）。绝不安装或升级任何东西，
- * 也不触碰正在运行的 `dsh web`：使用独立的临时 DSH_HOME 与独立工作目录。
+ * 只在本机安装明确支持官方 headless --json / --session-id 时执行；旧版安装明确 skip，
+ * 不安装、不升级，也不把「未验证」冒充通过。
  */
 function findDshBin(configured) {
   if (typeof process.env.FJZX_DSH_BIN === 'string' && existsSync(process.env.FJZX_DSH_BIN)) {
     return process.env.FJZX_DSH_BIN;
   }
-  // 优先用部署配置里实际使用的入口；没有配置时才退回 npm 缓存里找到的第一个安装。
   if (typeof configured === 'string' && existsSync(configured)) return configured;
   const roots = [
     join(process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'), 'npm-cache', '_npx'),
@@ -42,31 +35,41 @@ function findDshBin(configured) {
   return null;
 }
 
-/** 配置文件里写的 harness.bin（若本机已有），用于优先核对被部署的那一版。 */
 function dshBinFromConfig() {
-  let configured;
   try {
-    configured = loadConfig({}).harness.bin;
+    const configured = loadConfig({}).harness.bin;
+    return typeof configured === 'string' && existsSync(configured) ? configured : null;
   } catch {
     return null;
   }
-  return typeof configured === 'string' && existsSync(configured) ? configured : null;
 }
 
-test('真实 Harness：续接不存在的会话失败退出，且不静默新建会话', async (t) => {
-  // overlay 按本文件位置解析，不依赖调用方的当前工作目录。
-  const patch = join(fileURLToPath(new URL('..', import.meta.url)), 'scripts', 'headless-session', 'overlay.yml');
-  if (!existsSync(patch)) {
-    t.skip(`找不到 overlay：${patch}`);
-    return;
-  }
+test('真实 Harness：官方 --session-id 对未知会话失败，且不静默新建', async (t) => {
   const bin = findDshBin(dshBinFromConfig());
   if (bin === null) {
     t.skip('本机找不到 dsh 安装（可用 FJZX_DSH_BIN 指定 lib/bin.js，或先写好本机 config）');
     return;
   }
 
-  const root = makeTempDir('fjzx-issue9-dsh-');
+  let help;
+  try {
+    help = await execFileAsync({
+      command: process.execPath,
+      args: [bin, '--profile', 'headless', '--help'],
+      capture: 'pipe',
+      timeoutMs: 120000,
+    });
+  } catch (error) {
+    t.skip(`无法启动真实 Harness help：${error.message}`);
+    return;
+  }
+  const helpText = `${help.stdout}\n${help.stderr}`;
+  if (!helpText.includes('--session-id') || !helpText.includes('--json')) {
+    t.skip('当前本机 Harness headless 仍是旧版，不支持官方 --session-id / --json；本任务不擅自升级');
+    return;
+  }
+
+  const root = makeTempDir('fjzx-issue19-dsh-');
   t.after(() => cleanup(root));
   const cwd = join(root, 'workdir');
   const runDir = join(root, 'run');
@@ -80,30 +83,29 @@ test('真实 Harness：续接不存在的会话失败退出，且不静默新建
       harness: {
         bin,
         profile: 'headless',
-        patch,
         node: process.execPath,
         home: join(root, 'dsh-home'),
         timeoutMs: 120000,
       },
       exec: execFileAsync,
       cwd,
-      task: '这一轮不应调用模型：会话标识不存在，应当在取得凭据前失败。',
-      sessionId: 'session-does-not-exist-issue9-test',
+      task: '这一轮不应调用模型：会话标识不存在，应当在模型调用前失败。',
+      sessionId: 'session-does-not-exist-issue19-test',
       resultPath,
       stdoutPath: join(runDir, 'stdout.log'),
       stderrPath,
       capture: 'file',
     });
   } catch (error) {
-    // 子进程无法启动（例如受限环境）：明确跳过而不是假装通过。
     t.skip(`无法启动真实 Harness：${error.message}`);
     return;
   }
 
   assert.equal(outcome.exitCode, 1, '未知会话必须失败退出');
-  assert.equal(outcome.sessionId, null, '不产生新的会话标识，即没有静默新建会话');
-  assert.equal(outcome.statusKind, null);
-  assert.match(outcome.detail, /not found|不存在|resum/i, `失败原因应当可读：${outcome.detail}`);
+  assert.equal(outcome.sessionId, null, '不产生新的 session 事件，即没有静默新建会话');
+  assert.equal(outcome.statusKind, 'error');
+  assert.match(outcome.detail, /not found|does not exist|不存在|session/i, `失败原因应当可读：${outcome.detail}`);
   assert.equal(existsSync(stderrPath), true, 'stderr 落本机日志（缺省 file 捕获）');
-  assert.match(readFileSync(stderrPath, 'utf8'), /session-does-not-exist-issue9-test/);
+  assert.match(readFileSync(stderrPath, 'utf8'), /session-does-not-exist-issue19-test/);
+  assert.equal(JSON.parse(readFileSync(resultPath, 'utf8')).sessionId, null);
 });

@@ -22,7 +22,6 @@ function buildConfig(root) {
     machineId: MACHINE,
     harness: {
       bin: join(root, 'fake-bin.js'),
-      patch: join(root, 'overlay.yml'),
       node: process.execPath,
       timeoutMs: 60000,
     },
