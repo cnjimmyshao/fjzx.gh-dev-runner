@@ -6,7 +6,7 @@
 
 | 数据 | 当前位置／入口 | 责任 |
 | --- | --- | --- |
-| Runner 配置 | 本机配置文件，当前示例为 `.local/config.json` | 本机身份、允许仓库／发起人、工作目录、GitHub/Harness 调用参数 |
+| Runner 配置 | 本机 Runner 配置文件（具体路径由实现确定） | 本机身份、允许仓库／发起人、工作目录、GitHub/Harness 调用参数 |
 | Runner 状态 | `<stateDir>/state.json` | 内容处理进度、任务绑定、sessionId、活跃 Harness 调用、并发容量与恢复所需技术状态 |
 | Harness 会话 | Harness 自己的 `DSH_HOME` | 真正的模型对话、上下文与 Harness 持久化数据 |
 | 凭据 | `gh` 登录与 Harness 支持的凭据存储 | GitHub 授权和模型 Key；不进入普通配置／状态 JSON |
@@ -27,15 +27,12 @@ Runner **不复制 Harness 会话历史**，也不把 Issue 全文、PR 内容�
 | `harness.timeoutMs` | 单次调用的本机控制超时；不表示业务任务完成时限 |
 | `runtime.stateDir` | Runner 状态、锁和运行日志的本机根目录 |
 | `runtime.workspaceDir` | 独立任务工作目录／worktree 的默认父目录 |
-| `runtime.pollSeconds` | GitHub 增量检查间隔；调度 Contract 的目标默认值为 300 秒 |
-| `runtime.maxConcurrentHarnesses` | 本机同时允许的 Harness 调用上限；具体语义由调度 Contract 定义 |
 | `runtime.capture` / `keepRunLogs` | 本机子进程输出与日志保留策略 |
 | `github.timeoutMs` / `pageSize` | `gh` 调用和分页参数 |
 | `repositories[].repo` | 接入仓库身份，使用 `owner/name` |
 | `repositories[].allowedActors` | 允许发布执行请求的 GitHub 登录名 |
 | `repositories[].sourceDir` | 部署者已有仓库检出，用作创建独立任务 worktree 的源目录 |
 | `repositories[].baseBranch` / `worktreeDir` | worktree 起点与存放位置；每个任务最终目录必须唯一 |
-| `repositories[].maxConcurrentHarnesses` | 单仓库同时允许的 Harness 调用上限；具体语义由调度 Contract 定义 |
 
 同一仓库的多个 Issue **不得共享一个可写任务 checkout**。如果实现保留类似 `repoDir` 的兼容字段，它只能表示源仓库／父目录，或必须有明确的按任务唯一派生规则；不能让两个不同 Issue 的 Harness 写入同一个工作树。
 
@@ -51,7 +48,7 @@ repository identity + Issue number
 
 不能只用 Issue number。不同仓库都可能存在 `#1`、`#9` 等相同编号，状态必须彼此隔离。
 
-当前 v1 以嵌套 JSON 表示：
+V1 Contract 采用下面的逻辑形状表达需要持久化的信息；接单实现尚未合并，因此这不是“已部署文件”的描述：
 
 ```text
 activeRuns
@@ -72,11 +69,11 @@ repositories
         └── lastRun
 ```
 
-这是当前存储形状；稳定 Contract 是“仓库身份 + Issue 编号”的复合主键，而不是要求未来永远使用同样的嵌套对象布局。
+这是 V1 的目标存储形状；稳定 Contract 是“仓库身份 + Issue 编号”的复合主键，以及能够恢复活跃 Harness 运行态，而不是要求未来永远使用同样的嵌套对象布局。
 
 ## state.json v1 示例
 
-以下示例展示当前实现使用的主要字段。路径、session 和时间均为占位值：
+以下示例展示 V1 Contract 需要表达的主要信息。路径、session、PID 和时间均为占位值；后续实现可以在不破坏稳定语义的前提下调整内部字段名：
 
 ```json
 {
@@ -150,7 +147,7 @@ repositories
 
 | 字段 | 稳定性 | 含义 |
 | --- | --- | --- |
-| `seenSeq` | 稳定语义 | 评论增量处理进度；正常重启不能因此重放已处理命令 |
+| `seenSeq` | 稳定语义 | GitHub 内容增量处理进度；正常重启不能因此重放已处理的 Issue Body / Comment 事件 |
 | `commands[]` | 稳定语义、内部字段可演进 | 已观察／认领命令的处理记录，用于去重、恢复与必要反馈 |
 | `binding` | 稳定 Contract | 任务与执行机、工作目录、Harness session 的持久绑定；首次绑定前可为空 |
 | `lastRun` | 稳定语义、内部字段可演进 | 最近一次本机调用的技术结果与诊断入口；不代表业务结果 |
@@ -244,7 +241,7 @@ Runner 重启后，对上次记录为 starting / running、但当前尚未确认
 - 文件不存在可视为首次接入；文件存在但无法可靠解析时不得静默覆盖原状态。
 - 不兼容变化必须选择一种明确行为：升级 Schema 并提供必要迁移，或拒绝启动并要求人工确认。
 - 不要求为尚未部署、仅存在于开发 PR 中的每个中间版本建立迁移链。只有真实持久化兼容需求成立时才增加迁移。
-- 状态写入应避免把半截文件当成有效状态；当前实现采用“临时文件 + rename”，但具体原子写实现不属于长期数据模型 Contract。
+- 状态写入应避免把半截文件当成有效状态；可采用“临时文件 + rename”等原子替换方式，但具体原子写实现不属于长期数据模型 Contract。
 
 ## 状态与 GitHub 可见性的边界
 
