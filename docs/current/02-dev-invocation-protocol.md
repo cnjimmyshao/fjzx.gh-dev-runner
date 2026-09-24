@@ -90,6 +90,14 @@ Runner 不在唤醒消息中复制、总结或推断：
 
 这些边界避免 Runner 逐渐演变成第二个 Coordinator 或第二份需求来源。
 
+## 配置样例与 sessionId 边界
+
+仓库提供 [`prompts.example.json`](../../prompts.example.json) 作为可手工调整措辞的样例。样例使用“共享核心 + START / RESUME 模式文本”的组合，并只暴露本文允许的结构化占位符。
+
+该样例目前只是配置格式与措辞示意，**不表示当前 Runner 运行代码已经读取该文件**。后续实现可以把它作为默认模板或本机覆盖模板的来源，但配置不能删除或反转本文规定的核心语义；Current Contract 仍高于具体模板文字。
+
+sessionId 不属于 Dev 消息必须重复描述的业务上下文。Runner 在 RESUME 时应从本机 task binding 取得已保存的 sessionId，并通过 Harness 的正式启动／续接参数传递；Dev 消息只需明确“这是同一任务既有 session 的续接”，避免把 session 身份同时维护在命令参数和 prompt 两处。
+
 ## 与实现的关系
 
 本文件先定义行为 Contract，不表示当前代码已经实现 START / RESUME 两种消息。
