@@ -6,7 +6,7 @@
 
 ## 目标
 
-一个本地接单程序服务多个明确接入的仓库。它通过本机 GitHub CLI（`gh`）增量检查授权人的评论命令，按执行电脑路由，在对应工作目录直接启动 Harness headless CLI。首次执行记录会话标识，后续启动新进程续接同一持久化会话，不每次从头开发。
+一个本地接单程序服务多个明确接入的仓库。它通过本机 GitHub CLI（`gh`）增量检查授权人的 Issue Body / 后续新评论；每台电脑配置自己的 `runnerName`，每个新内容事件的正文 trim 后以 `@<runnerName>` 结尾时，才表示请求该电脑现在开始或继续工作。Runner 在对应工作目录直接启动 Harness headless CLI；首次执行记录会话标识，后续启动新进程续接同一持久化会话，不每次从头开发。
 
 DeepSeek 模型 API Key 在本机配置并保存，由 Harness 用于模型调用；实际需求分析、编码、测试与 PR 交付由 Dev 遵循目标项目的文档完成。Runner 只负责把正确的 Dev 叫起来并维护本机任务状态：成功启动后在目标 Issue 简短确认“DeepSeek 已开始工作”，正常结束不代写开发结果；业务问题、PR 与交接由 Dev 自己处理。
 
@@ -17,6 +17,7 @@ DeepSeek 模型 API Key 在本机配置并保存，由 Harness 用于模型调�
 - [AGENTS.md](AGENTS.md)：角色、权限、开发与 Review 方法、决策交接。
 - [文档导航](docs/README.md)：Current、ADR、Research 与 Archive 的分工。
 - [当前需求](docs/current/README.md)：已确认目标、边界与尚未落实的部分。
+- [Runner 激活与任务触发](docs/current/03-runner-trigger.md)：V1 的 `runnerName` 与 `@<runnerName>` 结尾触发 Contract。
 - [开发环境与验证](docs/development.md)：本机 CLI 验证结果与最小实现前的口径。
 - [CLI 本机验证报告](docs/research/2026-09-23-local-harness-cli-first-run-and-resume.md)：实际版本、实测结果与遗留取舍。
 - [headless 会话调用与续接](scripts/headless-session/README.md)：本机实测通过的调用／续接脚本及其边界。

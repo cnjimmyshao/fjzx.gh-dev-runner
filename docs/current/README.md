@@ -6,6 +6,7 @@ Current Version: 未编号（版本编号由维护者决定）
 
 - [范围与工作链路](01-scope-and-flow.md)
 - [Runner → Dev 唤醒消息协议](02-dev-invocation-protocol.md)
+- [Runner 激活与任务触发](03-runner-trigger.md)
 - [开发环境与验证结果](../development.md)
 - [架构取舍](../decisions/README.md)
 
@@ -13,4 +14,4 @@ Current Version: 未编号（版本编号由维护者决定）
 
 变更依据与代价见 [ADR 0002](../decisions/0002-headless-cli-execution.md)。原 Web Research 仍保留其时间点证据，不因运行方向改变而改写为 CLI 已验证。具体 CLI、凭据加载、续接和输出行为必须在实际安装版本上验证，不能从上游最新文档推断本机可用；实测记录见 [CLI 验证报告](../research/2026-09-23-local-harness-cli-first-run-and-resume.md)。
 
-评论命令的精确语法、执行机标签格式、配置文件与持久化结构在后续实施 Issue 中明确。`@dev`、`runner:dev-a` 仅是当前候选示例，不代表已经生效。除影响业务边界的事项外，普通实现取舍由实现者完成，不为每个配置字段增加人工审批。
+首版 Runner 的用户可见触发语义已经在 [Runner 激活与任务触发 Contract](03-runner-trigger.md) 中确定：每台机器配置自己的 `runnerName`；新建 Issue Body 或后续**每一条新评论**都独立判断，只有该内容 trim 后以 `@<runnerName>` 结尾才表示现在开始／继续工作。普通回复本身不触发；同一 Issue 可在后续新回复末尾再次写 `@<runnerName>` 来 RESUME 原任务。不再使用 `runner:<machineId>` + `@dev` 两层触发。配置文件与持久化结构由各自实施 Issue 继续明确。除影响业务边界的事项外，普通实现取舍由实现者完成，不为每个配置字段增加人工审批。
