@@ -103,7 +103,7 @@ runner:mb01 + @dev
 
 新建 Issue 时，如果 Issue 创建者属于授权主体，且**初始 Issue Body**满足命令规则，可直接请求对应 Runner 开始工作，不要求再补一条单独评论。该 Body 只作为一次性的初始触发候选；处理后不因后续重复扫描或编辑再次触发。
 
-Issue Body 不使用评论水位。Runner 为它单独保存一次性处理状态（逻辑名可记为 `issueBodyHandled`）。首次检查 Body 时，必须原子完成以下状态更新：若 Body 不是命令，只记录 `issueBodyHandled = true`；若 Body 是命令，则同时记录 `issueBodyHandled = true` 与唯一的 `lastTrigger(source=issue_body, status=observed)`。真正启动 Harness 前，再把该 `lastTrigger` 从 `observed` 持久化为 `starting`。这样即使 Runner 在“看到 Body 命令”与“启动 Harness”之间崩溃，重启后也能恢复这一个尚未消费的初始候选，而不会把 Issue identity 混入评论水位。
+Issue Body 不使用评论水位。Runner 为它单独保存一次性处理状态（逻辑名可记为 `issueBodyHandled`）。首次检查 Body 时，必须原子完成以下状态更新：若 Body 不是命令，只记录 `issueBodyHandled = true`；若 Body 是命令，则同时记录 `issueBodyHandled = true` 与唯一的 `lastTrigger(source=issue_body, status=observed)`。`lastTrigger` 只表示**尚未开始的当前候选**；真正准备启动时，Runner 必须原子地把该 trigger identity 转入 `activeRuns`（或等价的可恢复运行态）并记为 `starting`，同时清除/消费对应的 `lastTrigger`，然后才 spawn Harness。这样即使 Runner 在“看到 Body 命令”与“启动 Harness”之间崩溃，重启后也能恢复未消费候选；一旦进入启动阶段，恢复依据则来自 `activeRuns`，不会再靠候选字段。
 
 已有 Issue 进入评论阶段后，V1 **只检查当前最新一条 eligible control comment**。只有这条候选自身在 trim 后以 `@<runnerName>` 结尾，并且其 comment identity 高于本任务已经记录的候选水位，才表示现在开始或继续该 Issue 的工作。
 
@@ -124,16 +124,18 @@ Issue Body 不使用评论水位。Runner 为它单独保存一次性处理状�
 
 Runner 对每个 Issue 只维护一个**单调前进的评论水位**（逻辑名可记为 `eligibleCommentWatermark`）：它就是“这个 Issue 已经观察到的最新一条 eligible 人类评论 identity”。不保存历史评论队列。
 
-当出现新的 eligible 人类评论时，Runner 先判断它是不是命令，然后用一次原子状态更新推进水位：
+当出现新的 eligible 人类评论时，Runner 先判断它是不是命令，然后用一次原子状态更新推进水位。这个更新只改变“下一步候选”，**绝不能覆盖已经存在的 `activeRuns`**：
 
-- 如果只是普通授权回复：只推进 `eligibleCommentWatermark`；它立即覆盖更早候选。
-- 如果是以 `@<runnerName>` 结尾的命令：推进 `eligibleCommentWatermark` 的同时，把同一个 source identity 写入唯一的 `lastTrigger`，初始状态记为 `observed`。这表示“最新命令已经看见，但还没有开始尝试启动”。
+- 如果只是普通授权回复：推进 `eligibleCommentWatermark`，并清除任何仍处于 `observed`、尚未开始的 `lastTrigger`。这会让更早的 Comment 候选失效；如果更早候选来自 Issue Body，也同样失效。
+- 如果是以 `@<runnerName>` 结尾的命令：推进 `eligibleCommentWatermark`，并把唯一的 `lastTrigger` 替换为这个最新 source identity，状态记为 `observed`。它只代表“当前最新、尚未开始的下一步候选”。
 
-因此即使 Runner 在“看到命令”与“真正启动 Harness”之间崩溃，重启后仍可由 `eligibleCommentWatermark + lastTrigger(status=observed)` 恢复这一个当前候选，不会静默丢失，也不需要 pending 队列。
+因此即使 Runner 在“看到命令”与“真正启动 Harness”之间崩溃，重启后仍可由 `eligibleCommentWatermark + lastTrigger(status=observed)` 恢复这一个候选，不会静默丢失，也不需要 pending 队列。任何新的 eligible Comment 都会覆盖尚未开始的 Body/Comment 候选；普通回复会把候选清掉，新的命令回复会把候选替换成最新命令。
 
-水位只往前，不因评论删除、授权配置变化、重启或 API 返回集合变化而后退。被后续普通授权回复覆盖掉的旧 `@MB01` 不会在未来重新复活。
+水位只往前，不因评论删除、授权配置变化、重启或 API 返回集合变化而后退。被后续人类意图覆盖掉的旧 Body 命令或旧 `@MB01` Comment 不会在未来重新复活。
 
-一次有效命令从 `lastTrigger.status=observed` 进入 `starting`（或等价的“开始尝试启动”状态）时才算被消费。Runner 必须在真正启动子进程前先持久化这个状态转换。若只停留在 `observed` 就崩溃，重启后可以继续处理这一个仍为当前水位的候选；若已经进入 `starting`，则不得把同一候选当成全新的命令再次执行，而应按运行恢复规则核对实际启动结果。
+真正准备执行 `lastTrigger(status=observed)` 时，Runner 必须在一次原子状态更新中：为该 trigger 创建/更新 `activeRuns`（或等价运行态）并置为 `starting`，同时清除/消费对应的 `lastTrigger`，然后才 spawn Harness。若只停留在 `observed` 就崩溃，重启后仍可继续处理当前候选；若已经进入 `activeRuns.starting/running/unknown`，则恢复与单写入者判断只依赖 `activeRuns`，后来的新候选不得覆盖它。
+
+当某个 `activeRun` 仍在 starting/running/unknown 时，新 eligible Comment 仍可以继续更新水位和唯一的 `lastTrigger`，但它只是“当前执行结束后的下一步候选”，不能触发第二个写入者。当前 active run 结束并释放任务级单写入者约束后，Runner 再重新核对最新水位与 `lastTrigger`，决定是否启动下一轮。
 
 Harness 启动／续接明确失败后，该候选保持已消费，不自动重试；Runner 发布一次 `BOT:<runnerName>` 失败反馈后，等待授权主体发布新的 eligible control comment，或由维护者执行明确的人工恢复动作。
 
@@ -148,15 +150,15 @@ V1 保持简单，并把 Issue Body 与 Comment 的状态处理分开：
 1. 仅在 Issue 初次处理时检查，确认创建者属于授权主体；
 2. 读取 Body 原文并执行 trim，判断是否以 `@${runnerName}` 结尾；
 3. 原子保存 `issueBodyHandled = true`；若它是命令，同时把 source 记为 `issue_body` 的唯一 `lastTrigger` 置为 `observed`；
-4. 只有准备实际启动时，才把该 `lastTrigger` 从 `observed` 转为 `starting`，然后启动 Harness。
+4. 只有准备实际启动时，才原子地把该 trigger 转入 `activeRuns(status=starting)` 并清除/消费 `lastTrigger`，然后启动 Harness。
 
 **Comment：**
 
 1. 先排除 trim 后以 `BOT:` 开头的 Runner 自动反馈，并确认作者属于授权主体；
 2. 只取当前最新一条 eligible control comment，读取原文并执行 trim；
 3. 判断是否以 `@${runnerName}` 结尾；
-4. 用一次原子状态更新推进 `eligibleCommentWatermark`；若它是命令，同时把该 comment identity 写入唯一的 `lastTrigger` 并置为 `observed`；
-5. 只有准备实际启动时，才把当前 `lastTrigger` 从 `observed` 转为 `starting`，然后启动 Harness。
+4. 用一次原子状态更新推进 `eligibleCommentWatermark`：普通回复清除尚未开始的 `lastTrigger`；命令回复则把唯一的 `lastTrigger` 替换为该 comment identity 并置为 `observed`。任何已有 `activeRuns` 均保持不变；
+5. 只有准备实际启动时，才原子地把当前 trigger 转入 `activeRuns(status=starting)` 并清除/消费 `lastTrigger`，然后启动 Harness。
 
 V1 不解析 GitHub 的真实 mention，不依赖通知事件，也不为了 Markdown 引用、代码块等情况建设额外语法解析器。
 
@@ -164,7 +166,7 @@ V1 不解析 GitHub 的真实 mention，不依赖通知事件，也不为了 Mar
 
 Runner 采用增量发现，不在首次接入仓库时重放全部历史命令。
 
-Runner 需要分别保存两类进度：`issueBodyHandled` 只表示一次性的初始 Body 是否已经检查；`eligibleCommentWatermark` 只表示已经观察到的最新 eligible 人类 Comment identity。两者不能混用，也不需要保存历史评论队列。若 Body 或当前最新 Comment 是命令，则唯一的 `lastTrigger` 记录其 source（`issue_body` 或具体 comment identity）及 `observed / starting / ...` 状态：`observed` 表示尚未消费，进入 `starting` 后才表示已开始尝试并按运行恢复规则处理。Runner 自动反馈通过 `BOT:` 保留前缀直接识别，不要求跨机器共享 comment-id 列表。评论水位不得因评论删除、授权配置变化或重启向后移动；旧 eligible control comment 一旦被更新的人类候选覆盖，就不能在以后重新补执行。
+Runner 需要分别保存三类当前状态：`issueBodyHandled` 只表示一次性的初始 Body 是否已经检查；`eligibleCommentWatermark` 只表示已经观察到的最新 eligible 人类 Comment identity；`lastTrigger` 只保存**当前唯一、尚未开始的 observed 候选**。真正开始尝试后，该 trigger 必须转入独立的 `activeRuns` 运行/恢复状态，不能继续靠 `lastTrigger` 表示 starting/running。新的 eligible Comment 可以替换或清除 `lastTrigger`，但不得覆盖 `activeRuns`。这样既不保存历史命令队列，也不会丢失正在执行中的恢复状态。Runner 自动反馈通过 `BOT:` 保留前缀直接识别，不要求跨机器共享 comment-id 列表。评论水位不得因评论删除、授权配置变化或重启向后移动；旧 Body/Comment 候选一旦被更新的人类意图覆盖，就不能在以后重新补执行。
 
 具体水位与持久化结构由本地状态 Contract 负责，但不能改变这里定义的用户可见触发语义。
 
