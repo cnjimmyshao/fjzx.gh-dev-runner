@@ -45,7 +45,9 @@ Issue 的授权评论 + 明确执行机
 
 任务目录按接入配置二选一：给了部署者的仓库检出就用 `git worktree` 拉独立工作树，或直接用已备好的任务根目录；首次 clone 仍由部署者完成，本工具不代做。一个工作目录只服务一个任务：只配任务根目录时同一仓库的第二个任务会被拒绝并报告，需要同一仓库接多个任务时改用 worktree 方式。绑定存在时只核对目录仍在，不重新准备，避免覆盖任务未提交的工作。
 
-接单工具直接启动本机 Harness 官方 headless CLI，不连接或启动 `dsh web`。产品运行版本必须同时提供 `--json` 与 `--session-id`：首轮不指定会话标识，以 `--json` 的 `session` 事件记录 Harness 真实 sessionId；后续启动新进程，在相同工作目录和匹配持久化／profile 配置下用 `--session-id <id>` 续接。任务正文通过 stdin 作为数据传入，不放进 shell 或可见命令行实参。未知 Session、工作目录不符、Session ownership／preset 不兼容等由 Harness 官方 Contract 拒绝，接单工具按失败处理，不自行兜底创建新会话。\n\n本机 0.1.5-rc.2 缺少上述官方选项，曾通过 profile patch 做过一次性续接实验（见 [CLI 验证报告](../research/2026-09-23-local-harness-cli-first-run-and-resume.md)）；该实验只保留为历史证据，不是产品兼容路径。部署当前接单工具前应升级到具备官方 Contract 的 Harness，并在实际执行电脑重新验证；不得将上游文档、历史文件或仅收到启动回执当作本机已验证证据。
+接单工具直接启动本机 Harness 官方 headless CLI，不连接或启动 `dsh web`。产品运行版本必须同时提供 `--json` 与 `--session-id`：首轮不指定会话标识，以 `--json` 的 `session` 事件记录 Harness 真实 sessionId；后续启动新进程，在相同工作目录和匹配持久化／profile 配置下用 `--session-id <id>` 续接。任务正文通过 stdin 作为数据传入，不放进 shell 或可见命令行实参。未知 Session、工作目录不符、Session ownership／preset 不兼容等由 Harness 官方 Contract 拒绝，接单工具按失败处理，不自行兜底创建新会话。
+
+本机 0.1.5-rc.2 缺少上述官方选项，曾通过 profile patch 做过一次性续接实验（见 [CLI 验证报告](../research/2026-09-23-local-harness-cli-first-run-and-resume.md)）；该实验只保留为历史证据，不是产品兼容路径。部署当前接单工具前应升级到具备官方 Contract 的 Harness，并在实际执行电脑重新验证；不得将上游文档、历史文件或仅收到启动回执当作本机已验证证据。
 
 重启后应保留必要的评论处理进度和任务绑定，正常重试不重复启动。状态文件缺失按首次接入处理；存在但为空或无法解读，按损坏停止并要求人工核对，不静默当作新状态（那会丢掉全部绑定与进度）。换用新版本时，旧版本因「把空 Issue 的首条命令当成基线」而卡住的记录会被识别并重新受理一次。不承诺跨进程崩溃的端到端 exactly-once；执行是否已经发生不确定时明确报告并核对，不盲目重跑或新建会话。
 
