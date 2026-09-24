@@ -59,6 +59,7 @@ function killTree(pid) {
  * @param {string[]} options.args
  * @param {string} [options.cwd]
  * @param {Record<string, string|undefined>} [options.env]
+ * @param {string} [options.stdin] 可选；提供时把文本写入子进程 stdin，避免把任务正文放进命令行参数
  * @param {number} [options.timeoutMs] 0 或省略表示不限时
  * @param {'file'|'pipe'} [options.capture]
  * @param {string} [options.stdoutFile] capture=file 时的 stdout 落盘路径
@@ -66,7 +67,7 @@ function killTree(pid) {
  */
 export function execFileAsync(options) {
   const {
-    command, args, cwd, env, timeoutMs = 0, capture = 'file', stdoutFile, stderrFile,
+    command, args, cwd, env, stdin, timeoutMs = 0, capture = 'file', stdoutFile, stderrFile,
   } = options;
   const useFiles = capture === 'file';
   if (useFiles && (stdoutFile === undefined || stderrFile === undefined)) {
@@ -93,8 +94,10 @@ export function execFileAsync(options) {
         cwd,
         env,
         windowsHide: true,
-        // file 模式把子进程的 stdout/stderr 直接接到文件，父进程不占管道。
-        stdio: useFiles ? ['ignore', stdoutFd, stderrFd] : ['ignore', 'pipe', 'pipe'],
+        // 任务正文可走 stdin；file 模式仍把 stdout/stderr 直接接到文件，父进程不占输出管道。
+        stdio: useFiles
+          ? [stdin === undefined ? 'ignore' : 'pipe', stdoutFd, stderrFd]
+          : [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       });
     } catch (error) {
       reject(new ExecError(`${command} 无法启动：${error.message}`, { code: error.code }));
@@ -106,6 +109,7 @@ export function execFileAsync(options) {
     }
     let stdout = '';
     let stderr = '';
+    let stdinError = null;
     let timedOut = false;
     let settled = false;
     let graceTimer;
@@ -122,6 +126,11 @@ export function execFileAsync(options) {
 
     child.stdout?.setEncoding('utf8');
     child.stderr?.setEncoding('utf8');
+    if (child.stdin !== null) {
+      // 子进程若在读完前失败，stdin 可能报 EPIPE；真实失败仍由进程退出码／stderr 判读。
+      child.stdin.on('error', (error) => { stdinError = error; });
+      child.stdin.end(stdin);
+    }
     child.stdout?.on('data', (chunk) => { stdout += chunk; });
     child.stderr?.on('data', (chunk) => { stderr += chunk; });
 
@@ -140,6 +149,14 @@ export function execFileAsync(options) {
       if (timedOut) {
         finish(reject, new ExecError(`${command} 超时（${timeoutMs}ms）`, {
           code: 'ETIMEDOUT', exitCode: code, stderr, timedOut: true,
+        }));
+        return;
+      }
+      if ((code ?? 1) === 0 && stdinError !== null) {
+        finish(reject, new ExecError(`${command} 写入 stdin 失败：${stdinError.message}`, {
+          code: stdinError.code,
+          exitCode: code,
+          stderr: useFiles ? readIfPresent(stderrFile) : stderr,
         }));
         return;
       }

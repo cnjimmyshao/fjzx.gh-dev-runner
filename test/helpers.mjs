@@ -29,7 +29,6 @@ export function baseConfig({ root, repoDir, sourceDir, runnerId = 'mb01', overri
     machineId: runnerId,
     harness: {
       bin: join(root, 'fake-bin.js'),
-      patch: join(root, 'overlay.yml'),
       node: process.execPath,
       timeoutMs: 60000,
     },
@@ -47,9 +46,7 @@ export function baseConfig({ root, repoDir, sourceDir, runnerId = 'mb01', overri
     ],
     ...overrides,
   };
-  for (const file of [raw.harness.bin, raw.harness.patch]) {
-    mkdirSync(join(file, '..'), { recursive: true });
-  }
+  mkdirSync(join(raw.harness.bin, '..'), { recursive: true });
   return { raw, config: parseConfig(raw, { configPath: join(root, 'config.json') }) };
 }
 export function makeGh({ issues = [], comments = {}, failIssues = null, failComments = null, onCreate } = {}) {
@@ -78,49 +75,51 @@ export function makeGh({ issues = [], comments = {}, failIssues = null, failComm
 }
 
 /**
- * Harness 调用替身：按 DSH_TASK / DSH_SESSION_ID 决定新建或续接，并把结果 JSON 写进
- * DSH_RESULT_FILE，与 scripts/headless-session 的输出契约一致。
+ * Harness 调用替身：模拟官方 headless `--json` / `--session-id` Contract。
  *
- * 替身只负责这些契约；它**不**代替真实 exec 把 stdout/stderr 写到 options.stdoutFile ——
- * 那正是被测代码要保证的事，之前替身替它写了，才让 file 捕获的缺陷一直没被发现。
- * 真实 file 捕获由 test/exec.test.mjs 走真实子进程覆盖。
+ * 任务正文必须走 options.stdin；stdout 返回官方形态的 JSONL。替身不代替真实 exec 落盘，
+ * 真实 file 捕获与 stdin 由 test/exec.test.mjs 覆盖。
  */
-export function makeHarnessExec({ newSessionId = () => `session-fake-${++counter}`, exitCode = 0, status = { kind: 'completed' }, spawnThrows = null } = {}) {
+export function makeHarnessExec({
+  newSessionId = () => `session-fake-${++counter}`,
+  exitCode = 0,
+  status = { kind: 'completed' },
+  spawnThrows = null,
+  reportedSessionId = ({ sessionId }) => sessionId,
+} = {}) {
   const runs = [];
   const exec = async (options) => {
     if (options.command === 'git') return { exitCode: 0, stdout: '', stderr: '' };
-    const env = options.env ?? {};
-    if (env.DSH_BIN !== undefined && !env.DSH_BIN.endsWith('fake-bin.js')) {
-      throw new Error(`替身只应处理测试配置：DSH_BIN=${env.DSH_BIN}`);
-    }
     if (spawnThrows !== null) throw spawnThrows;
+    const sessionAt = options.args.indexOf('--session-id');
+    const requestedSession = sessionAt === -1 ? null : options.args[sessionAt + 1];
     const run = {
       cwd: options.cwd,
-      task: env.DSH_TASK ?? null,
-      requestedSession: env.DSH_SESSION_ID ?? null,
+      task: options.stdin ?? null,
+      requestedSession,
       capture: options.capture,
       stdoutFile: options.stdoutFile,
       stderrFile: options.stderrFile,
-      resultFile: env.DSH_RESULT_FILE ?? null,
+      args: [...options.args],
     };
-    // 缺省 capture=file 时必须给出落盘位置，否则真实 exec 会拒绝执行。
     if (options.capture === 'file' && (options.stdoutFile === undefined || options.stderrFile === undefined)) {
       throw new Error('capture=file 需要同时给出 stdoutFile 与 stderrFile');
     }
-    const sessionId = run.requestedSession ?? newSessionId();
+    const selectedSessionId = requestedSession ?? newSessionId();
+    const sessionId = reportedSessionId({
+      requestedSession,
+      sessionId: selectedSessionId,
+      runIndex: runs.length,
+    });
     run.sessionId = sessionId;
     runs.push(run);
-    if (run.resultFile !== null) {
-      const { writeFileSync } = await import('node:fs');
-      writeFileSync(run.resultFile, `${JSON.stringify({
-        sessionId,
-        continueReason: run.requestedSession === null ? 'created' : 'resumed',
-        status,
-        text: '替身回答',
-        cwd: options.cwd,
-      })}\n`, 'utf8');
-    }
-    return { exitCode, stdout: `${JSON.stringify({ sessionId })}\n`, stderr: '' };
+    const stdout = [
+      JSON.stringify({ type: 'session', sessionId, cwd: options.cwd }),
+      JSON.stringify({ type: 'status', phase: 'turn_end', turn: 1, reason: status }),
+      JSON.stringify({ type: 'final', text: '替身回答' }),
+      '',
+    ].join('\n');
+    return { exitCode, stdout, stderr: '' };
   };
   return { exec, runs };
 }

@@ -1,56 +1,26 @@
-# headless 会话调用与续接
+# 0.1.5-rc.2 headless 会话兼容实验（历史）
 
-本机已装 Harness 版本（实测 `@deepseek-ai/dsh` 0.1.5-rc.2）的 headless CLI 只有
-`[task...]` 与 `--help`，没有上游更高版本才有的 `--session-id` / `--json`，也不会
-续接既有会话。本目录用 profile composition 的公开扩展点补上这一层，不改安装、不
-新增服务与端口，也不改用其他界面：
+本目录对应 [Issue #7 的 CLI Research](../../docs/research/2026-09-23-local-harness-cli-first-run-and-resume.md)。
+当时本机安装的 `@deepseek-ai/dsh 0.1.5-rc.2` 的 headless CLI 没有
+`--session-id` / `--json`，因此曾通过 profile composition 临时挂一个本地 runner，
+验证“跨进程继续同一持久化 Session”是否可行。
 
-- `runner.mjs`：本地 runner，new / resume 一个持久化会话并投递一轮任务。
-- `overlay.yml`：`--patch` overlay，停用 headless bundle 自带的 `headless-startup`
-  与 `headless-runner`，把 `runner.mjs` 挂成 runner。
+该实验已经完成并保留在 Git 历史和 Research 报告里；它证明的是**当时版本与当时方案**，
+不是当前产品运行 Contract。
 
-## 用法
+## 当前状态
 
-```powershell
-$env:DSH_BIN  = '<dsh 安装的 lib/bin.js>'          # 例如 <npm 缓存>\...\@deepseek-ai\dsh\lib\bin.js
-$env:DSH_TASK = '<本次任务文本>'
-$env:DSH_HOME = '<持久化 home>'                    # 可选；缺省用 ~/.dsh
+[Issue #19](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/19) 已决定产品直接使用
+Harness 官方 headless 能力：
 
-# 首轮：不带 DSH_SESSION_ID，输出里会带新建的会话标识
-node $env:DSH_BIN --profile headless --patch <仓库>\scripts\headless-session\overlay.yml
+- 首轮：`--json`，从 `session` 事件取得真实 sessionId；
+- 续接：相同工作目录下使用 `--session-id <id>`；
+- 任务正文从 stdin 传入；
+- unknown session、cwd / ownership / preset 不匹配由 Harness 官方实现拒绝。
 
-# 续接：把上一轮结果里的 sessionId 传回去，必须仍在同一工作目录启动
-$env:DSH_SESSION_ID = 'session-<上一轮返回的 id>'
-node $env:DSH_BIN --profile headless --patch <仓库>\scripts\headless-session\overlay.yml
-```
+因此历史 `runner.mjs` 与 `overlay.yml` 已从当前 HEAD 删除，接单程序也不再引用
+`DSH_TASK`、`DSH_SESSION_ID`、`DSH_RESULT_FILE`、`DSH_BIN` 或 `--patch`。
 
-可选：`DSH_RESULT_FILE` 把同一份结果写成 JSON 文件；`DSH_DEBUG_RUNNER=1` 在 stderr
-打印运行细节。模型 Key 仍按 Harness 受支持的方式提供——继承的环境变量、
-`$DSH_HOME/.credentials.yaml`、调用目录或 `$DSH_HOME` 下的 `.env`——本脚本不读取、
-不打印也不保存 Key。
-
-## 输出与失败
-
-stdout 是一行 result JSON：
-
-```json
-{"sessionId":"session-…","continueReason":"created|resumed","status":{"kind":"completed"},"text":"…","cwd":"…"}
-```
-
-- 退出码 `0`：本轮 turn 以 `completed` 结束。这不代表业务任务完成，也不代表测试或
-  Review 通过。
-- 退出码 `1`：失败、中止或用法错误。stderr 给出 `dsh: <code>: <message>`；可在
-  result JSON 的 `status.error` 里读到同一错误的 `code` 与 `message`。
-- 续接不存在的会话标识：失败退出，**不会**静默新建会话。
-- 在与会话记录不一致的工作目录续接：失败退出并报出记录目录；不会在新目录里继续旧任务。
-
-## 依赖与边界
-
-- `runner.mjs` 位于仓库，需按 `DSH_BIN` 指向的安装解析随安装提供的包；`DSH_BIN`
-  缺失且包名无法从本文件解析时会加载失败并明示。
-- `overlay.yml` 按行 id 停用 headless bundle 的两行；该 bundle 升级后 id 变化会变成
-  `patch: entry … not found` 警告，需重新核对（实测 0.1.5-rc.2 与 0.1.5-rc.3 相同）。
-- 权限、沙箱与审批沿用 headless profile 的默认值（`DSH_PERMISSION_MODE`，缺省
-  `workspace-write` + `ask`），本脚本不额外放宽。
-- 这是 Research 阶段的最小调用件，不是接单工具的完整实现：评论解析、授权、路由与
-  任务绑定不在本目录。
+需要复核旧实验时，请读取关联 Research 和对应 Git 历史；**不要把本目录恢复成生产兼容层**。
+若执行电脑仍是 0.1.5-rc.2，应由维护者明确授权升级到具备官方 headless Contract 的版本，
+然后按 `docs/development.md` 重新做本机验证。本仓库不会自动升级正在工作的 Harness。

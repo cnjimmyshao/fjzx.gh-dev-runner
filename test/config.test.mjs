@@ -9,7 +9,7 @@ import {
 
 const BASE = {
   machineId: 'mb01',
-  harness: { bin: 'C:/dsh/lib/bin.js', patch: 'scripts/headless-session/overlay.yml' },
+  harness: { bin: 'C:/dsh/lib/bin.js' },
   repositories: [{ repo: 'owner/project', allowedActors: ['maintainer'], repoDir: 'C:/tasks/project' }],
 };
 
@@ -80,11 +80,7 @@ test('路径支持 ~ 与相对配置文件目录展开', () => {
   assert.equal(expandPath('~', 'C:/cfg'), homedir());
   assert.equal(expandPath('~/tasks', 'C:/cfg'), join(homedir(), 'tasks'));
   assert.equal(expandPath('rel/tasks', 'C:/cfg'), resolve('C:/cfg', 'rel/tasks'));
-  const config = parse({
-    harness: { ...BASE.harness, patch: 'scripts/x.yml' },
-    runtime: { stateDir: '.local/state' },
-  });
-  assert.equal(config.harness.patch, resolve('C:/cfg', 'scripts/x.yml'));
+  const config = parse({ runtime: { stateDir: '.local/state' } });
   assert.equal(config.runtime.stateDir, resolve('C:/cfg', '.local/state'));
 });
 
@@ -99,7 +95,6 @@ test('非法捕获方式与非整数间隔不进入运行期', () => {
 test('启动前置校验只核对本机路径，不承诺 gh 已登录', () => {
   const config = parse({});
   const problems = checkConfig(config);
-  assert.equal(problems.length, 2, 'bin 与 patch 在测试里并不存在');
+  assert.equal(problems.length, 1, '只要求官方 dsh 入口存在，不再要求仓库 overlay');
   assert.ok(problems.some((line) => line.includes('harness.bin')));
-  assert.ok(problems.some((line) => line.includes('harness.patch')));
 });
