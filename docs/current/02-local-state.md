@@ -102,7 +102,7 @@ repositories
           "sourceType": "comment",
           "sourceId": "123456",
           "author": "maintainer-login",
-          "status": "claimed",
+          "status": "observed",
           "at": "2026-09-24T00:00:00.000Z",
           "feedbackSent": false
         },
@@ -171,11 +171,15 @@ V1 不保存同一 Issue 的历史命令队列。Trigger Contract 只需要三�
 
 1. `issueBodyHandled`：初始 Body 这个一次性入口是否已经处理；
 2. `eligibleCommentWatermark`：已经看到的最新 eligible 人类 Comment identity，只能向前；
-3. `lastTrigger`：最近一次真正被认领的执行请求，用于恢复和避免重复反馈。
+3. `lastTrigger`：与当前／最近命令候选对应的唯一状态记录，用于区分“已观察但尚未启动”和“已经开始尝试”。
 
-新的 eligible 人类 Comment 一旦被观察到，无论它是否以 `@<runnerName>` 结尾，都先推进 `eligibleCommentWatermark`。因此普通授权回复可以覆盖更早的命令，而旧命令不会因为更新评论被删除、授权配置变化或 Runner 重启而重新复活。
+新的 eligible 人类 Comment 被观察到后：
+- 普通授权回复只推进 `eligibleCommentWatermark`；
+- 命令评论则在同一次原子状态更新中推进 `eligibleCommentWatermark`，并把同一 source identity 写入 `lastTrigger(status=observed)`。
 
-有效命令一旦被认领并尝试启动即视为已消费；启动失败不自动重新执行同一个候选。需要再次执行时，由授权主体发布新的 eligible control comment。长期历史追溯写入 audit/run log，不在 `state.json` 中维护 `commands[]` 历史列表。
+因此 Runner 即使在观察命令后、实际启动前崩溃，重启仍能看到“当前水位对应一个 observed 命令”，不会把它静默丢掉。只有在准备真正启动 Harness 时，才先把 `lastTrigger` 持久化为 `starting`（或等价状态），随后 spawn 子进程；进入 `starting` 后该候选才视为已经消费，并转入 active run / 恢复语义。
+
+如果新的 eligible 普通回复推进了水位，而旧 `lastTrigger` 仍是 `observed` 且 sourceId 小于水位，则该旧命令自然被覆盖，不再执行。长期历史追溯写入 audit/run log，不在 `state.json` 中维护 `commands[]` 历史列表。
 
 `lastTrigger` 至少能表达：
 
@@ -184,7 +188,7 @@ V1 不保存同一 Issue 的历史命令队列。Trigger Contract 只需要三�
 | `sourceType` | 稳定 Contract | `issue_body` 或 `comment`，区分触发来源 |
 | `sourceId` | 稳定 Contract | 本次最近触发来源的稳定身份；Comment 使用 comment id，Issue Body 使用能够唯一指向初始 Body 的 identity |
 | `author` | 稳定语义 | 内容作者，用于审计／授权结果回查 |
-| `status` | 实现 Schema | 最近触发的技术处理状态，例如 claimed / starting / running / failed；名称可随实现收敛 |
+| `status` | 实现 Schema | 最近触发的技术处理状态；至少要能表达 `observed`（已看到、未消费）与 `starting`（开始尝试、已消费）的等价语义，后续 running / failed 等名称可由实现收敛 |
 | `at` / `finishedAt` | 实现 Schema | 本机处理时间 |
 | `feedbackSent` | 实现 Schema | 是否已经发送必要的 Runner 控制反馈，避免重复刷评论 |
 
