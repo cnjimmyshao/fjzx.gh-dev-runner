@@ -44,13 +44,13 @@
 
 ## 后续最小实现
 
-CLI 验证确认可用后，再写明确的实施 Issue：少量本机配置与凭据保存、通过 `gh` 读取新建 Issue Body 与当前最新 eligible control comment、按 `runnerName` 识别当前触发候选、去重及任务绑定、CLI 启动／续接、必要日志与反馈。一个 Issue 的当前 task binding 只归一个 Runner。实现时必须同时覆盖两类正式候选：创建时授权主体的一次性初始 Body，以及已有评论后“授权主体发布且不以保留前缀 `BOT:` 开头”的当前最新评论；不为同一 Issue 的历史 `@<runnerName>` 评论建设 pending 队列。Runner 自动反馈统一写成 `BOT:<runnerName>` 前缀。新增文件按实际职责组织，不预建 Scheduler、Repository、Adapter 等整套层次。
+CLI 验证确认可用后，再写明确的实施 Issue：少量本机配置与凭据保存、通过 `gh` 读取新建 Issue Body 与当前最新 eligible control comment、按 `runnerName` 识别当前触发候选、去重及任务绑定、CLI 启动／续接、必要日志与反馈。一个 Issue 的当前 task binding 只归一个 Runner。实现时必须同时覆盖两类正式候选：创建时授权主体的一次性初始 Body，以及已有评论后“授权主体发布且不以保留前缀 `BOT:` 开头”的当前最新评论；运行期间的新回复不排队，Harness 结束后再读取当时最新的一条。Runner 自动反馈统一写成 `BOT:<runnerName>` 前缀。新增文件按实际职责组织，不预建 Scheduler、Repository、Adapter 等整套层次。
 
 GitHub 资料入口：[gh api](https://cli.github.com/manual/gh_api)、[Issues API](https://docs.github.com/en/rest/issues/issues)、[Issue comments API](https://docs.github.com/en/rest/issues/comments)。后续按实际接口核对分页、更新时间和限流。
 
 实现保持 Issue 级 single-flight：每次准备检查某个 Issue 前，先看本机任务运行状态。若该 Issue 已有 Harness 处于 starting / running / unknown，直接跳过这个 Issue，不读取它的新评论、不更新 `eligibleCommentWatermark`、不向当前 Harness 注入消息，也不启动第二个写入者；Runner 仍继续扫描其他 Issue / 其他仓库。
 
-只有 Issue 空闲时才读取当前最新一条 eligible control comment，排除 `BOT:` 自动反馈并核对作者授权。若最新评论不新于该 Issue 的水位则忽略；若更新则把水位推进到它，然后只对这**一条当前最新评论**做 trim + `@<runnerName>` 结尾判断。是命令就 START / RESUME，不是命令就仅保存新水位。Harness 启动后水位保持在本次触发位置，直到该 Harness 明确结束；下次轮询再看那时的最新回复。V1 不保存 pending comment、`lastTrigger` 或“下一轮候选”队列。
+只有 Issue 空闲时才读取当前最新一条 eligible control comment，排除 `BOT:` 自动反馈并核对作者授权。若最新评论不新于该 Issue 的水位则忽略；若更新则把水位推进到它，然后只对这**一条当前最新评论**做 trim + `@<runnerName>` 结尾判断。是命令就 START / RESUME，不是命令就仅保存新水位。Harness 启动后水位保持在本次触发位置，直到该 Harness 明确结束；下次轮询再看那时的最新回复。Harness 运行期间的新回复不保存为待执行任务；Harness 结束后再读取当时最新的一条。
 
 验证至少覆盖：同一 Issue 运行中不会启动第二个 Harness且水位不动；与此同时其他 Issue / 其他仓库仍可正常领取；当前 Harness 结束后只依据当时最新 eligible comment 决定是否 RESUME；普通轮询和重启不会重复执行同一触发。
 
