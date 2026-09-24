@@ -103,6 +103,8 @@ runner:mb01 + @dev
 
 新建 Issue 时，如果 Issue 创建者属于授权主体，且**初始 Issue Body**满足命令规则，可直接请求对应 Runner 开始工作，不要求再补一条单独评论。该 Body 只作为一次性的初始触发候选；处理后不因后续重复扫描或编辑再次触发。
 
+Issue Body 不使用评论水位。Runner 为它单独保存一次性处理状态（逻辑名可记为 `issueBodyHandled`）。首次检查 Body 时，必须原子完成以下状态更新：若 Body 不是命令，只记录 `issueBodyHandled = true`；若 Body 是命令，则同时记录 `issueBodyHandled = true` 与唯一的 `lastTrigger(source=issue_body, status=observed)`。真正启动 Harness 前，再把该 `lastTrigger` 从 `observed` 持久化为 `starting`。这样即使 Runner 在“看到 Body 命令”与“启动 Harness”之间崩溃，重启后也能恢复这一个尚未消费的初始候选，而不会把 Issue identity 混入评论水位。
+
 已有 Issue 进入评论阶段后，V1 **只检查当前最新一条 eligible control comment**。只有这条候选自身在 trim 后以 `@<runnerName>` 结尾，并且其 comment identity 高于本任务已经记录的候选水位，才表示现在开始或继续该 Issue 的工作。
 
 更早的 eligible control comment 即使以 `@<runnerName>` 结尾，也不排队、不补执行。Runner 不维护同一 Issue 内的 pending comment / pending execution-request 队列。
@@ -139,14 +141,22 @@ Harness 启动／续接明确失败后，该候选保持已消费，不自动重
 
 ## 匹配规则
 
-V1 保持简单：
+V1 保持简单，并把 Issue Body 与 Comment 的状态处理分开：
 
-1. 先排除 trim 后以 `BOT:` 开头的 Runner 自动反馈；
-2. 确认候选来源具备授权：Issue Body 的创建者是授权主体；Comment 的作者是授权主体；
-3. 读取候选正文原文并执行 trim；
-4. 检查是否以 `@${runnerName}` 结尾；
-5. 用一次原子状态更新推进 `eligibleCommentWatermark`；若它是命令，同时把该 identity 写入唯一的 `lastTrigger` 并置为 `observed`；
-6. 只有准备实际启动时，才把当前 `lastTrigger` 从 `observed` 转为 `starting`，然后启动 Harness。
+**Issue Body：**
+
+1. 仅在 Issue 初次处理时检查，确认创建者属于授权主体；
+2. 读取 Body 原文并执行 trim，判断是否以 `@${runnerName}` 结尾；
+3. 原子保存 `issueBodyHandled = true`；若它是命令，同时把 source 记为 `issue_body` 的唯一 `lastTrigger` 置为 `observed`；
+4. 只有准备实际启动时，才把该 `lastTrigger` 从 `observed` 转为 `starting`，然后启动 Harness。
+
+**Comment：**
+
+1. 先排除 trim 后以 `BOT:` 开头的 Runner 自动反馈，并确认作者属于授权主体；
+2. 只取当前最新一条 eligible control comment，读取原文并执行 trim；
+3. 判断是否以 `@${runnerName}` 结尾；
+4. 用一次原子状态更新推进 `eligibleCommentWatermark`；若它是命令，同时把该 comment identity 写入唯一的 `lastTrigger` 并置为 `observed`；
+5. 只有准备实际启动时，才把当前 `lastTrigger` 从 `observed` 转为 `starting`，然后启动 Harness。
 
 V1 不解析 GitHub 的真实 mention，不依赖通知事件，也不为了 Markdown 引用、代码块等情况建设额外语法解析器。
 
@@ -154,7 +164,7 @@ V1 不解析 GitHub 的真实 mention，不依赖通知事件，也不为了 Mar
 
 Runner 采用增量发现，不在首次接入仓库时重放全部历史命令。
 
-Runner 需要知道初始 Body 是否已经处理，并为每个 Issue 保存一个单一的 `eligibleCommentWatermark`，表示已经观察到的最新 eligible 人类评论 identity；不需要保存历史评论队列。若这个最新候选是命令，则唯一的 `lastTrigger` 保存同一个 source identity 及其 `observed / starting / ...` 状态：`observed` 表示尚未消费，进入 `starting` 后才表示已开始尝试并按运行恢复规则处理。Runner 自动反馈通过 `BOT:` 保留前缀直接识别，不要求跨机器共享 comment-id 列表。评论水位不得因评论删除、授权配置变化或重启向后移动；旧 eligible control comment 一旦被更新的人类候选覆盖，就不能在以后重新补执行。
+Runner 需要分别保存两类进度：`issueBodyHandled` 只表示一次性的初始 Body 是否已经检查；`eligibleCommentWatermark` 只表示已经观察到的最新 eligible 人类 Comment identity。两者不能混用，也不需要保存历史评论队列。若 Body 或当前最新 Comment 是命令，则唯一的 `lastTrigger` 记录其 source（`issue_body` 或具体 comment identity）及 `observed / starting / ...` 状态：`observed` 表示尚未消费，进入 `starting` 后才表示已开始尝试并按运行恢复规则处理。Runner 自动反馈通过 `BOT:` 保留前缀直接识别，不要求跨机器共享 comment-id 列表。评论水位不得因评论删除、授权配置变化或重启向后移动；旧 eligible control comment 一旦被更新的人类候选覆盖，就不能在以后重新补执行。
 
 具体水位与持久化结构由本地状态 Contract 负责，但不能改变这里定义的用户可见触发语义。
 
