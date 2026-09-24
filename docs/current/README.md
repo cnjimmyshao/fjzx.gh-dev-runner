@@ -2,7 +2,7 @@
 
 Current Version: 未编号（版本编号由维护者决定）
 
-**状态：目标 Contract 是 Harness 官方 headless CLI。** 接单程序已在 [Issue #9](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/9) 中实现于 `src/`，并由 [Issue #19](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/19) 收缩为直接使用官方 `--json` / `--session-id`；真实 GitHub 评论与升级后真实 Harness 的端到端接单尚未验证。0.1.5-rc.2 的自定义续接实验仍是历史实测，不代表当前官方路径已经在执行电脑通过。此处不是安装指南或上线声明。
+**状态：目标 Contract 是 Harness 官方 headless CLI。** 接单程序已在 [Issue #9](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/9) 中实现于 `src/`，并由 [Issue #19](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/19) 收缩为直接使用官方 `--json` / `--session-id`；相关隔离测试已同步到该 Contract，但真实 GitHub 评论与升级后真实 Harness 的端到端接单尚未验证。0.1.5-rc.2 的自定义续接实验仍是历史实测，不代表当前官方路径已经在执行电脑通过。此处不是安装指南或上线声明。
 
 - [范围与工作链路](01-scope-and-flow.md)
 - [开发环境与验证结果](../development.md)
