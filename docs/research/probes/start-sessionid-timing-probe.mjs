@@ -421,7 +421,14 @@ async function runAcp() {
       if (handledIds.has(message.id)) continue;
       handledIds.add(message.id);
       if (message.error !== undefined) {
-        mark('acp-error', { id: message.id, message: JSON.stringify(message.error).slice(0, 160) });
+        // JSON-RPC 错误消息可能回显 cwd 等绝对路径；只记结构化字段与长度。
+        const detail = JSON.stringify(message.error);
+        mark('acp-error', {
+          id: message.id,
+          code: message.error?.code ?? null,
+          hasPathLikeText: /[A-Za-z]:\\|\//.test(String(message.error?.message ?? '')),
+          detailBytes: detail.length,
+        });
         continue;
       }
       if (message.id === 1) mark('acp-initialized');
@@ -439,12 +446,22 @@ async function runAcp() {
   }
   // 子进程可能在上一次轮询之后写出响应并立即退出；判定「未观察到」之前再读一次。
   drain();
-  if (sessionId === null) mark('sessionId-not-observed');
+  if (sessionId === null) {
+    mark('sessionId-not-observed', { reason: Date.now() >= deadline ? 'deadline' : 'child-exit' });
+    if (Date.now() >= deadline && !timedOut) {
+      // 子进程一直活着但没在时限内给出标识：这是探针自己的超时，要如实结算。
+      timedOut = true;
+      mark('probe-timeout', { timeoutMs, stage: 'acp-session-new' });
+    }
+  }
   clearInterval(tick);
-  // 会话在 session/new 阶段就已创建并落盘；本轮不再投递 prompt，直接结束子进程。
+  // 会话若存在，在 session/new 阶段就已创建并落盘；本轮不再投递 prompt，直接结束子进程。
   if (childExitedAt === null) {
     launched.kill('SIGKILL');
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await Promise.race([
+      new Promise((resolve) => launched.once('exit', resolve)),
+      new Promise((resolve) => setTimeout(resolve, 3000)),
+    ]);
   }
   closeSync(inFd);
   await waitExit();
