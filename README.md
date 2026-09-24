@@ -8,7 +8,7 @@
 
 一个本地接单程序服务多个明确接入的仓库。它通过本机 GitHub CLI（`gh`）增量检查授权人的 Issue Body / 后续新评论；每台电脑配置自己的 `runnerName`，每个新内容事件的正文 trim 后以 `@<runnerName>` 结尾时，才表示请求该电脑现在开始或继续工作。Runner 在对应工作目录直接启动 Harness headless CLI；首次执行记录会话标识，后续启动新进程续接同一持久化会话，不每次从头开发。
 
-DeepSeek 模型 API Key 在本机配置并保存，由 Harness 用于模型调用；实际需求分析、编码、测试与 PR 交付由 Dev 遵循目标项目的文档完成。Runner 只负责把正确的 Dev 叫起来并维护本机任务状态：成功启动后在目标 Issue 简短确认“DeepSeek 已开始工作”，正常结束不代写开发结果；业务问题、PR 与交接由 Dev 自己处理。
+DeepSeek 模型 API Key 在本机配置并保存，由 Harness 用于模型调用；实际需求分析、编码、测试与 PR 交付由 Dev 遵循目标项目的文档完成。Runner 只负责把正确的 Dev 叫起来并维护本机任务状态：合法执行请求成功启动或续接 Harness、进入对应 session 并取得 sessionId 后，只在目标 Issue 回复一次“Runner 名 + Session ID”；正常结束不代写开发结果，业务问题、PR 与交接由 Dev 自己处理。
 
 首版不依赖 Harness Web 服务、浏览器 cookie 或原网页实时观看，不依赖 GitHub Actions 定时轮询，不建设新的审查系统、中央调度平台或管理界面。已确认的取舍见 [ADR 0002](docs/decisions/0002-headless-cli-execution.md)。
 
@@ -32,4 +32,4 @@ DeepSeek 模型 API Key 在本机配置并保存，由 Harness 用于模型调�
 
 Runner 不是 Harness 结果转述器。它需要在本机知道 Harness 是否成功启动、当前 session、工作目录、是否仍在运行以及必要退出状态，以便去重、释放执行状态和正确续接；这些技术状态默认留在本机。
 
-GitHub 上由 Runner 反馈的只是自己的控制结果：成功叫起 Dev、命令未启动、根本启动失败，以及 Dev 无法自行交接时的必要基础设施异常。Harness 正常结束后不自动发布 `completed`、exit code、模型回答或“开发完成”。业务完成与否继续由 Dev 的代码、测试、PR、Review 和 Issue 交接体现。详见 [Current](docs/current/01-scope-and-flow.md) 与 [Issue #11](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/11)。
+GitHub 上由 Runner 反馈的只是自己的控制结果：合法执行请求成功启动或续接 Harness、进入对应 session 并取得 sessionId 后，回复一次“Runner 名 + Session ID”；如果 Harness 根本无法正常启动或续接、Dev 未进入可工作的 session，则在原 Issue 留一条简短失败回复。正常执行过程中和 Harness 正常结束后不额外刷状态，也不自动发布 `completed`、exit code、模型回答或“开发完成”。业务完成与否继续由 Dev 的代码、测试、PR、Review 和 Issue 交接体现。详见 [Current](docs/current/01-scope-and-flow.md)、[Runner Trigger Contract](docs/current/03-runner-trigger.md) 与 [Issue #11](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/11)。
