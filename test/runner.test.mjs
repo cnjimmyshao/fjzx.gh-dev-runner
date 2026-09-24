@@ -96,6 +96,35 @@ test('启动后的新命令建立独立目录与会话，第二条命令续接�
   assert.match(ctx.gh.created[1].body, /已接单：在该任务既有工作目录续接原 Harness 会话/);
 });
 
+test('续接异常返回不同 sessionId 时保留原绑定，不被异常身份覆盖', async (t) => {
+  const ctx = setup({
+    harness: {
+      reportedSessionId: ({ sessionId, requestedSession, runIndex }) =>
+        runIndex === 1 && requestedSession !== null ? 'session-unexpected' : sessionId,
+    },
+  });
+  t.after(() => cleanup(ctx.root));
+  const history = [comment(100, '历史讨论')];
+  withComments(ctx.gh, { 'owner/project#1': history });
+  await ctx.runner.cycle();
+
+  withComments(ctx.gh, { 'owner/project#1': [...history, comment(200, '@dev')] });
+  await ctx.runner.cycle();
+  const original = entry(ctx).binding.sessionId;
+  assert.ok(original?.startsWith('session-fake-'));
+
+  withComments(ctx.gh, {
+    'owner/project#1': [...history, comment(200, '@dev'), comment(201, '@dev')],
+  });
+  await ctx.runner.cycle();
+
+  assert.equal(ctx.runs[1].requestedSession, original);
+  assert.equal(ctx.runs[1].sessionId, 'session-unexpected');
+  assert.equal(entry(ctx).binding.sessionId, original, '异常返回不能改写既有绑定');
+  assert.equal(entry(ctx).lastRun.kind, 'turn-failed');
+  assert.match(ctx.gh.created.at(-1).body, /sessionId 与请求不一致/);
+});
+
 test('公开回写不带任何本机路径信息，只给稳定任务标识', async (t) => {
   const ctx = setup();
   t.after(() => cleanup(ctx.root));
