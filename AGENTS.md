@@ -35,6 +35,14 @@ Issue → 确认 Scope / Contract → 必要时 Research → 分支
 → 维护者批准 Merge → Close Issue
 ```
 
+### Contract 文档先行
+
+改变长期 Requirement、Contract、职责边界、运行流程、权限、对外行为保证或验收语义时，先在关联 Issue 中形成决定，再通过**独立的 documentation-only PR**更新对应的 Current、AGENTS 或必要 ADR。文档 PR 完成 Review 并合并后，该规则才成为当前实现依据；随后再开或继续独立的 Implementation Issue / PR，由实现者重新读取最新 main 后编码、测试和 Review。不要把尚未合并的候选文档当作已生效规范，也不要在代码 PR 中顺手制定新的 Contract。
+
+后续若实现过程中发现必须改变已经合并的 Contract，同样先回到关联 Issue 说明原因与影响，再用独立文档 PR 修改并合并，然后继续代码调整。这样让“为什么改规则”“规则何时生效”“哪次代码实现依据哪版规则”都能从 Issue / PR / Git 历史追溯。
+
+普通实现细节仍由 Implementer 在已确认 Contract 内自主决定，不为函数、内部结构或每个配置字段增加文档审批。纯拼写、格式、失效链接等不改变语义的文档维护沿用轻量例外；紧急绕过文档先行必须由 Maintainer 明确授权，并在事后补齐可追踪记录。
+
 已有任务直接复用，不重复建 Issue。纯拼写、格式等不改变行为的维护可以不单独建 Issue，但仍通过 PR。特殊紧急处理需维护者明确授权并补记录，不能因改动小就直接写 main。
 
 最终交付 PR 使用 `Closes #N` 关联本仓库任务；中间交付使用 `Refs #N`，不得提前关闭未完成任务。没有明确授权，不自动 merge、部署、迁移、删除真实数据或关闭其他任务。模板是入口提示，不是额外审批制度。
@@ -84,9 +92,11 @@ Requirement 与 Implementation 分开；实现建议可写，但未批准的方�
 
 ## 代码与文档同步
 
-先核对相关 Current。实现补齐既有要求时不制造无意义文档 diff；长期行为、接口或保障范围改变时，同一 PR 同步 `docs/current/`。重要且易反复争论的取舍记录 ADR；新的外部事实或本机实测按 Research 规则留证。
+先核对相关 Current。Implementation 只是落实已经合并的 Contract 时，不制造无意义文档 diff；可以在同一 Implementation PR 中同步与该实现直接相关、但**不改变 Contract**的实现说明、示例、开发文档或链接。
 
-Issue 中获批的新长期规则需要落实到 Current，不留待未来补写。不得为通过审查而反向降低需求、删除有效测试或把既有承诺改称不支持。Current 的目标 Contract 不等于功能已经实现；实现和验证状态必须如实说明。
+如果实现过程中发现必须改变长期 Requirement、Contract、职责边界、运行流程、接口、权限、对外行为保证或验收语义，不在当前 Implementation PR 中顺手修改 Current 来制定新规则。应回到关联 Issue 说明原因与影响，先通过独立的 documentation-only PR 更新对应 Current、AGENTS 或必要 ADR，并在该文档 PR Review / Merge 后，再回到 Implementation PR 继续实现。重要且易反复争论的取舍记录 ADR；新的外部事实或本机实测按 Research 规则留证。
+
+Issue 中获批的新长期规则必须通过上述独立文档 PR 落实并先合并，不能留待未来补写，也不能由 Implementation PR 先行生效。不得为通过审查而反向降低需求、删除有效测试或把既有承诺改称不支持。Current 的目标 Contract 不等于功能已经实现；实现和验证状态必须如实说明。
 
 ## Code Review Rules
 
