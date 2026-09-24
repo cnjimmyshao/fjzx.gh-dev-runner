@@ -7,10 +7,13 @@ Current Version: 未编号（版本编号由维护者决定）
 - [范围与工作链路](01-scope-and-flow.md)
 - [Runner → Dev 唤醒消息协议](02-dev-invocation-protocol.md)
 - [Runner 激活与任务触发](03-runner-trigger.md)
+- [Harness 并发与轮询调度](04-harness-scheduling.md)
 - [开发环境与验证结果](../development.md)
 - [架构取舍](../decisions/README.md)
 
 已确认方向是轻量、本地增量检查、多个项目和多台电脑独立配置。GitHub 通信复用本机 `gh`；执行侧使用本机模型 Key 直接启动 Harness headless CLI，按任务记录和续接持久化会话，过程通过终端／本机日志观察。首版不再依赖常驻 Web 服务、cookie 引导或原 Web 界面。
+
+Harness 调度采用机器级 + 仓库级两级并发上限；一次 polling cycle 最多新增领取一个 Issue；`runtime.pollSeconds` 默认 300 秒并可配置；Runner 重启后无法确认旧 Harness 已退出时先保守占槽。具体见 [Harness 并发与轮询调度](04-harness-scheduling.md)。
 
 变更依据与代价见 [ADR 0002](../decisions/0002-headless-cli-execution.md)。原 Web Research 仍保留其时间点证据，不因运行方向改变而改写为 CLI 已验证。具体 CLI、凭据加载、续接和输出行为必须在实际安装版本上验证，不能从上游最新文档推断本机可用；实测记录见 [CLI 验证报告](../research/2026-09-23-local-harness-cli-first-run-and-resume.md)。
 
