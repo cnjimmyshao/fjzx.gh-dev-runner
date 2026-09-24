@@ -6,7 +6,7 @@
 
 ## 目标
 
-一个本地接单程序服务多个明确接入的仓库。每台电脑配置自己的 `runnerName`，一个 Issue 的当前 task binding 只归一个 Runner。Runner 通过本机 GitHub CLI（`gh`）检查授权主体的当前控制意图：新建 Issue 时只检查一次初始 Body；已有评论后只看当前最新一条 eligible control comment，也就是授权主体发布、且不是 Runner 自动反馈的普通评论。Runner 自动反馈统一以 `BOT:<runnerName>` 开头并从候选中排除。只有当前候选正文 trim 后以 `@<runnerName>` 结尾时，才表示请求该电脑现在开始或继续工作；新的授权普通回复会覆盖更早候选，旧命令不排队、不补执行。Runner 在对应工作目录直接启动 Harness headless CLI；首次执行记录会话标识，后续启动新进程续接同一持久化会话，不每次从头开发。
+一个本地接单程序服务多个明确接入的仓库。每台电脑配置自己的 `runnerName`，一个 Issue 的当前 task binding 只归一个 Runner。Runner 通过本机 GitHub CLI（`gh`）检查授权主体的当前控制意图：新建 Issue 时只检查一次初始 Body；已有评论后只看当前最新一条 eligible control comment，也就是授权主体发布、且不是 Runner 自动反馈的普通评论。Runner 自动反馈统一以 `BOT:<runnerName>` 开头并从候选中排除。只有当前候选正文 trim 后以 `@<runnerName>` 结尾时，才表示请求该电脑现在开始或继续工作；旧命令不排队、不补执行。**如果这个 Issue 已经有 Harness 正在运行，Runner 直接跳过这个 Issue：不读取它的新评论、不更新它的评论水位、也不启动第二个 Harness；其他 Issue 和其他仓库仍照常轮询并可在并发上限内运行。** 当前 Harness 退出后，下一次轮询才重新读取该 Issue 当时最新的 eligible control comment，再决定是否续接原 session。Runner 在对应工作目录直接启动 Harness headless CLI；首次执行记录会话标识，后续启动新进程续接同一持久化会话，不每次从头开发。
 
 DeepSeek 模型 API Key 在本机配置并保存，由 Harness 用于模型调用；实际需求分析、编码、测试与 PR 交付由 Dev 遵循目标项目的文档完成。Runner 只负责把正确的 Dev 叫起来并维护本机任务状态：合法执行请求成功启动或续接 Harness、进入对应 session 并取得 sessionId 后，只在目标 Issue 回复一次“Runner 名 + Session ID”；正常结束不代写开发结果，业务问题、PR 与交接由 Dev 自己处理。
 
