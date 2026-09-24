@@ -28,8 +28,7 @@
 
 1. 本机已装并在实际运行账户下**登录** `gh`，且该账户对目标仓库有读取评论、写入评论的权限。
    `gh auth status` 能看到目标主机；安装 CLI 不等于已登录。
-2. 本机已有 Harness 安装与模型凭据；凭据按 Harness 受支持的方式提供，本工具不读取、不打印、
-   不保存 Key。调用件与实测边界见 [`../scripts/headless-session/README.md`](../scripts/headless-session/README.md)。
+2. 本机已有支持官方 headless `--json` / `--session-id` 的 Harness 与模型凭据；凭据按 Harness 受支持的方式提供，本工具不读取、不打印、不保存 Key。发布记录从 0.1.6-alpha.1 起包含这两个能力；部署时仍以实际 `--help` 与本机验证为准。0.1.5-rc.2 的旧兼容实验见 [`../scripts/headless-session/README.md`](../scripts/headless-session/README.md)，不作为产品运行入口。
 3. 目标仓库的维护者已同意接入，并在目标 Issue 上设置唯一标签 `runner:<本机 machineId>`。
 4. 本机配置写好（见下）。配置、凭证与任务状态都留在本机，不入库、不进入公开评论。
 
@@ -40,9 +39,8 @@
 | 字段 | 说明 |
 | --- | --- |
 | `machineId` | 本机执行机标识，决定监听标签 `runner:<machineId>`；也可用 `--machine-id` 传入 |
-| `harness.bin` | `dsh` 安装入口（`lib/bin.js`），同时作为本地 runner 解析随安装包的锚点 |
-| `harness.profile` | 缺省 `headless` |
-| `harness.patch` | 本仓库 `scripts/headless-session/overlay.yml` 的绝对路径 |
+| `harness.bin` | `dsh` 安装入口（`lib/bin.js`） |
+| `harness.profile` | 缺省 `headless`；必须原生支持 `--json` 与 `--session-id` |
 | `harness.home` | 可选；`DSH_HOME` 覆盖点，缺省用 `~/.dsh` |
 | `harness.timeoutMs` | 单次调用的硬超时，缺省 15 分钟；超时按调用失败回报，不冒充完成 |
 | `runtime.stateDir` | 状态、日志与临时输出目录；缺省 `~/.fjzx-gh-dev-runner` |
@@ -103,7 +101,7 @@ node src/main.mjs --capture pipe          # 临时改为管道捕获，在终端
 - **一个工作目录只服务一个任务**：只配 `repoDir` 时该仓库的多个 Issue 会落在同一目录，因此第二个
   任务会被拒绝并回报原因（否则两个任务会在同一份检出上并行开发、互相覆盖未提交的工作）。同一仓库
   要接多个任务请改用 `sourceDir`（每个 Issue 一个独立 git worktree），或为任务分别准备目录。
-- 首轮启动后把返回的真实 `sessionId` 写进绑定；后续命令在**同一目录**带该标识续接原会话。
+- 首轮以官方 `--json` 启动并从开头的 `session` 事件取得真实 `sessionId` 写进绑定；后续命令在**同一目录**通过官方 `--session-id <id>` 续接原会话。任务正文走 stdin，不写入命令行参数。
 - 目录不存在、绑定属于别的执行机、绑定来源与配置不一致时，报告并停止，不静默新建会话或换目录。
 - 上次调用在取得会话标识前中断时，保留绑定与目录，下一轮在同一目录新建会话并在 Issue 说明。
 - 上次停在「准备工作目录」阶段（还没有绑定，Harness 从未启动）时，恢复会如实回报，并把进度回退到
@@ -115,8 +113,8 @@ node src/main.mjs --capture pipe          # 临时改为管道捕获，在终端
 <stateDir>/state.json                          # 绑定、进度、命令处理记录（本机）
 <stateDir>/runner.lock                         # 单实例锁（独占创建，活着的持有进程会让第二个实例退出）
 <stateDir>/logs/<repo>-issue-<n>/<时间>-<评论 id>/
-    result.json                                # 本轮调用的结构化结果（sessionId、status）
-    harness.stdout.log / harness.stderr.log    # Harness 原始输出（capture=file 时）
+    result.json                                # 从官方 JSONL 派生的控制摘要（不含模型正文）
+    harness.stdout.log / harness.stderr.log    # Harness 官方 JSONL / 诊断原始日志（capture=file 时）
     git.stdout.log / git.stderr.log            # 建 worktree 的 git 输出
 <stateDir>/logs/runner-YYYY-MM-DD.log          # 接单过程日志（token 形态已脱敏）
 <stateDir>/tmp/                                # gh 输出临时文件
@@ -143,4 +141,4 @@ node src/main.mjs --capture pipe          # 临时改为管道捕获，在终端
 - 每轮按标签拉取该仓库的 Open Issue 列表：默认 `github.pageSize` 为 100，大仓库（数百个带标签的
   Open Issue）会产生多次分页请求。实测把 pageSize 调到 3 时，对 `microsoft/vscode`（label=bug）
   会在 120 秒超时；接入这类仓库时请调大 `pageSize`，或只接入确实需要接单的仓库。
-- `harness.home` 缺省 `~/.dsh`；本工具只复用该安装与凭据，不安装、不升级、不重启工作中的 Harness。
+- `harness.home` 缺省 `~/.dsh`；本工具只复用该安装与凭据，不安装、不升级、不重启工作中的 Harness。若现有版本缺少官方 `--json` / `--session-id`，部署前由维护者明确升级；产品代码不回退到仓库自定义 overlay runner。

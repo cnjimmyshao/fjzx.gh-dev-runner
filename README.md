@@ -2,7 +2,7 @@
 
 轻量、可部署在不同执行电脑上的 GitHub Issue 接单与 DeepSeek Harness 会话续接工具。
 
-**当前阶段：接单程序已实现（`src/`），最小 `package.json` 与自动化测试通过；尚未在真实业务仓库上做过端到端接单。** 本机 0.1.5-rc.2 的首轮执行与同会话续接此前已实测通过（见 `scripts/headless-session/`）；接单程序与真实 GitHub 评论、真实 Harness 会话的联调，需要维护者提供授权的测试 Issue 后再做。本工具尚未部署或接管真实开发任务。
+**当前阶段：接单程序已实现（`src/`），当前产品调用 Contract 直接使用 Harness 官方 headless `--json` / `--session-id`；尚未在真实业务仓库上做过端到端接单。** 本机此前对 0.1.5-rc.2 做过自定义 profile patch 的首轮／续接验证，但该旧版不具备当前产品要求的官方 CLI 能力，旧兼容实验只作为历史证据保留。执行电脑升级后的官方路径尚未实测；本工具尚未部署或接管真实开发任务。
 
 ## 目标
 
@@ -21,7 +21,7 @@ DeepSeek 模型 API Key 在本机配置并保存，由 Harness 用于模型调�
 - [接单工具说明](src/README.md)：配置、启动命令、接单规则、绑定与已知限制。
 - [配置示例](config.example.json)：脱敏占位示例，复制为 `.local/config.json` 后修改。
 - [CLI 本机验证报告](docs/research/2026-09-23-local-harness-cli-first-run-and-resume.md)：实际版本、实测结果与遗留取舍。
-- [headless 会话调用与续接](scripts/headless-session/README.md)：本机实测通过的调用／续接脚本及其边界。
+- [旧版 headless 兼容实验](scripts/headless-session/README.md)：0.1.5-rc.2 历史验证说明；不是当前产品运行入口。
 
 开发入口是关联 Issue。Issue 保存问题与决定，PR 交付变更；读取仓库规则后按任务执行，不依赖聊天里另发一份长提示词。运行命令与配置字段见 [接单工具说明](src/README.md)；外部 Review 集成是否已启用需另行核验。
 
