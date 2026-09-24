@@ -2,7 +2,7 @@
 
 ## 定位与部署
 
-一个独立的本地接单工具，不属于任何被接入业务项目的业务代码。每台执行电脑安装同一程序，配置自己的机器标识、允许的仓库与发起人、项目目录及 Harness CLI 运行与持久化配置。只处理显式接入的仓库，不自动扫描并启动所有未完成 Issue。
+一个独立的本地接单工具，不属于任何被接入业务项目的业务代码。每台执行电脑安装同一程序，配置自己的 `runnerName`、允许的仓库与发起人、项目目录及 Harness CLI 运行与持久化配置。只处理显式接入的仓库，不自动扫描并启动所有未完成 Issue。
 
 首版接 DeepSeek Harness，不预建多模型适配。不同电脑可承担不同项目，但不承诺任意操作系统和工具链已经兼容；支持矩阵由实际验证逐步形成。
 
@@ -11,6 +11,16 @@
 接单工具通过本机 `gh` 增量读取 GitHub Issue Body 与后续评论、检查授权并识别本机 Runner 命令、定位任务会话、启动或续接 Harness CLI，并管理必要的本机控制状态。Runner 只负责确认是否把 Dev 正确叫起、维持任务绑定与单写入者边界；GitHub 上只做最小接单／启动失败反馈，完整进程状态与运行轨迹保留在本机。它不分析业务需求、不裁决 Finding、不代替维护者作决定，也不建设第二套提交、测试和 Review 编排系统。
 
 模型调用、Agent 循环与工具执行由 Harness 负责。Dev 在目标项目会话中读取该项目的 Issue、AGENTS、Current 和最新决定，按任务要求研究、编码、测试、提交 PR 或提问，并自行把工作结果和待决问题 POST 回目标 Issue / PR。目标项目需要的开发环境仍由该执行电脑提供。
+
+## 配置与本机状态边界
+
+Runner、Runner runtime state 与 Harness 使用三个独立的配置／持久化边界：
+
+- Runner 的 `.env` 是人工部署配置入口，保存 `runnerName`、轮询与并发参数、接入仓库和授权人、工作根目录、Harness 可执行入口及 `DSH_HOME` 位置等 Runner 自己需要的值。仓库只提交不含真实凭据的 `.env.example`。
+- `.local/` 保存 Runner 自动维护的任务绑定、内容处理进度、运行状态、必要日志等 runtime state；这些值不回写 `.env`。
+- `DSH_HOME` 归 Harness 管理，保存其凭据、profile、session 与其他 Harness 持久化数据。模型 API Key 优先使用 Harness 实际版本支持的凭据／配置机制，不作为 Runner 普通配置保存。
+
+Runner 启动 Harness 时只构造该子进程需要的环境：保留 `gh` 与 Harness 正常启动、定位各自本机配置所需的最小系统环境，并显式传入 `DSH_HOME` 等已允许的 Harness 变量。不得把完整 Runner `process.env` 无差别透传给 Harness；Runner 的 GitHub 路由、内部配置和无关凭据不因启动子进程自动暴露。GitHub 权限来自执行账户已经配置好的本机 `gh` 认证，Runner 不把 `GH_TOKEN` / `GITHUB_TOKEN` 注入或转发给 Harness。实际版本若必须通过环境变量接收某项 Harness 自身配置，应把该变量加入明确 allowlist，而不是扩大为整套环境继承。
 
 ## 任务入口
 
@@ -40,6 +50,8 @@
 
 不同任务使用独立目录或 worktree，保护未提交工作；已有 PR 的任务继续原分支，不另开重复 PR。绑定、目录或会话不明确时报告，不凭会话标题猜测，不悄悄从头开发。
 
+同一台执行机优先使用一个共享的 Harness `DSH_HOME`；不同任务通过不同 session 和不同工作目录／worktree 隔离，不为每个 Harness 进程预先创建独立 home。同一个 session 仍只允许一个活动写入进程。具体安装版本在开放多进程并发前，必须先实测“同一 `DSH_HOME`、不同 session”能够同时运行、持久化并再次 resume；未验证的版本不能仅凭上游最新实现声称并发安全。
+
 接单工具直接启动本机 Harness headless CLI，不连接或启动 `dsh web`。每次调用是一个执行进程；进程退出不删除任务绑定，后续以已保存的会话标识、相同工作目录和匹配的持久化／profile 配置继续。首次取得标识、续接条件与失败信号已通过一次性本机 CLI 验证确认（见 [CLI 验证报告](../research/2026-09-23-local-harness-cli-first-run-and-resume.md)）；当已装版本自身没有会话身份选项时，用该版本支持的 profile 组合挂本地 runner 补齐，命令仍保持「启动器 + headless profile」。不得将发现历史文件或仅收到启动回执当作正确续接的证据。
 
 重启后应保留必要的内容处理进度和任务绑定，正常重试不重复启动。不承诺跨进程崩溃的端到端 exactly-once；执行是否已经发生不确定时明确报告并核对，不盲目重跑或新建会话。
@@ -48,9 +60,9 @@
 
 ## 凭据与本机调用
 
-GitHub 通信复用实际运行账户已授权的 `gh`；安装 CLI 不等于该账户已登录或具备目标仓库权限。不通过浏览器操作 GitHub，不另建 GitHub 登录系统。
+GitHub 通信统一复用实际运行账户已经配置好的本机 `gh`。Runner 启动时必须先执行 `gh auth status`；检查失败则 Runner 启动失败并且不进入轮询。检查通过后，Runner 与随后启动的 Harness 都使用同一执行账户可访问的本机 `gh` 认证配置；无需在每次 Harness 启动时重新登录，也不由 Runner 注入或转发 `GH_TOKEN` / `GITHUB_TOKEN`。仅依赖临时环境 token、而没有可供该执行账户复用的本机 `gh` 登录状态，不属于当前部署 Contract。目标仓库权限不足等运行期 GitHub 错误应明确报告；不通过浏览器操作 GitHub，也不另建 GitHub 登录系统。
 
-部署者在本机配置并保存 DeepSeek 模型 API Key，通过 Harness 支持的凭据配置或子进程环境提供给它。具体存储与加载方式由实际版本验证后落实。Key 不进入仓库、Issue、任务正文、可见命令行实参或日志；本机凭据文件使用适当受限的访问权限，密钥失效时明确提示，不自行轮换或绕过认证。
+DeepSeek 模型凭据由 Harness 实际版本支持的机制保存在其独立配置边界中，例如 `$DSH_HOME/.credentials.yaml` 或 Harness 自己加载的 `.env`。Runner 的 `.env` 不作为模型 Key 的默认存储位置，Runner 也不以读取、打印或持久化模型 Key 为默认职责。若某个实际版本只能通过子进程环境接收凭据，也只显式传入对应的 Harness 变量。Key 不进入仓库、Issue、任务正文、可见命令行实参或日志；本机凭据文件使用适当受限的访问权限，密钥失效时明确提示，不自行轮换或绕过认证。
 
 首版不实现 Web 启动 URL/cookie 引导、Web API 调用、令牌抓取或 Harness 认证改造。取消的是本机 Web 接入依赖，Harness 调用模型服务仍需要网络与有效模型凭据。
 
