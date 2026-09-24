@@ -33,7 +33,7 @@
 → Runner 本机记录启动、运行、结束与异常轨迹
 ```
 
-同一任务同一时刻只允许一个 Harness 写入者。某个 Issue 已有 Harness 处于 starting / running / unknown 时，Runner 对这个 Issue 只做“正在运行，跳过”的判断，不再读取或解释该 Issue 的 GitHub 新内容，也不推进其评论水位；这不会阻塞 Runner 继续轮询和处理其他 Issue / 其他仓库。该 Harness 明确结束并释放任务级运行状态后，下一次轮询再从原水位出发读取该 Issue 当时最新的 eligible control comment：最新回复以 `@<runnerName>` 结尾则 RESUME 原 task / workspace / session；否则只推进水位，不启动 Harness。运行期间出现的中间旧评论不排队、不补执行，也不需要 pending / next-candidate 状态。具体机器级／仓库级容量与领取规则由调度 Contract 负责。多台电脑的 Runner 名称由部署者保持唯一，不建设分布式选主。
+同一任务同一时刻只允许一个 Harness 写入者。某个 Issue 已有 Harness 处于 starting / running / unknown 时，Runner 对这个 Issue 只做“正在运行，跳过”的判断，不再读取或解释该 Issue 的 GitHub 新内容，也不推进其评论水位；这不会阻塞 Runner 继续轮询和处理其他 Issue / 其他仓库。该 Harness 明确结束并释放任务级运行状态后，下一次轮询再从原水位出发读取该 Issue 当时最新的 eligible control comment：最新回复以 `@<runnerName>` 结尾则 RESUME 原 task / workspace / session；否则只推进水位，不启动 Harness。运行期间出现的中间旧评论不排队、不补执行。具体机器级／仓库级容量与领取规则由调度 Contract 负责。多台电脑的 Runner 名称由部署者保持唯一，不建设分布式选主。
 
 ## 会话与工作目录
 
