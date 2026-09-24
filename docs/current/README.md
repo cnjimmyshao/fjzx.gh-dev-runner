@@ -17,4 +17,4 @@ Current Version: 未编号（版本编号由维护者决定）
 
 本机状态必须持久化任务绑定、内容去重和活跃 Harness 技术运行态，使 Runner 重启后仍能恢复单写入者与并发占用判断；具体见 [本机配置与状态 Schema](02-local-state.md)。
 
-首版 Runner 的用户可见触发语义已经在 [Runner 激活与任务触发 Contract](03-runner-trigger.md) 中确定：每台机器配置自己的 `runnerName`；新建 Issue Body 或后续**每一条新评论**都独立判断，只有该内容 trim 后以 `@<runnerName>` 结尾才表示现在开始／继续工作。普通回复本身不触发；同一 Issue 可在后续新回复末尾再次写 `@<runnerName>` 来 RESUME 原任务。不再使用 `runner:<machineId>` + `@dev` 两层触发。配置文件与持久化结构由各自实施 Issue 继续明确。除影响业务边界的事项外，普通实现取舍由实现者完成，不为每个配置字段增加人工审批。
+首版 Runner 的用户可见触发语义已经在 [Runner 激活与任务触发 Contract](03-runner-trigger.md) 中确定：每台机器配置自己的 `runnerName`；新建 Issue Body 或后续**每一条新评论**都独立判断，只有该内容 trim 后以 `@<runnerName>` 结尾才表示现在开始／继续工作。普通回复本身不触发；同一 Issue 可在后续新回复末尾再次写 `@<runnerName>` 来 RESUME 原任务。不再使用 `runner:<machineId>` + `@dev` 两层触发。本机持久化的稳定语义见 [本机配置与状态 Schema](02-local-state.md)；具体配置文件路径、JSON 内部字段与实现细节由后续 Implementation PR 在该 Contract 内收敛。除影响业务边界的事项外，普通实现取舍由实现者完成，不为每个内部字段增加人工审批。
