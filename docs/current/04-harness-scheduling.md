@@ -35,6 +35,33 @@ AND
 repoActive < repository.maxConcurrentHarnesses
 ```
 
+## Issue 级 single-flight
+
+机器级和仓库级容量之外，还有一条独立且更简单的任务约束：
+
+> **同一个 repository + Issue 同一时刻最多只能有一个 Harness 调用。**
+
+Runner 每轮考虑某个 Issue 时，先查看本机运行状态：
+
+- 如果该 Issue 已有 Harness 处于 starting / running / unknown，直接跳过这个 Issue；
+- 不为了这个 Issue 再启动第二个 Harness；
+- 不读取或处理该 Issue 在运行期间新增的控制评论，也不推进该 Issue 的触发水位；
+- 当前 Harness 明确结束后，后续 polling cycle 才重新检查该 Issue 当时最新的 GitHub 控制意图。
+
+这个锁只作用于当前 Issue，不作用于整个 Runner，也不自动锁住整个仓库。因此：
+
+- 同一仓库的其他 Issue，只要仓库级和机器级并发上限仍有容量，可以同时运行；
+- 其他仓库的 Issue 也可以同时运行；
+- 不需要为正在运行的 Issue 建立 pending / next-candidate 队列。
+
+例如同一时刻：
+
+```text
+repo-A #1  -> running，跳过 #1
+repo-A #2  -> 若 repo-A / machine 仍有槽位，可以启动
+repo-B #8  -> 若 machine 仍有槽位，可以启动
+```
+
 例如：
 
 ```json
@@ -89,7 +116,7 @@ repoActive < repository.maxConcurrentHarnesses
 - 不推进到会导致下轮忽略它的评论处理水位；
 - 等后续有槽位时再正常领取。
 
-“同一任务已经有调用在运行时又收到新的继续命令”仍属于任务内单写入者规则，和“机器/仓库没有新任务槽位”是两个不同问题。
+“同一 Issue 已经有 Harness 在运行”不是容量不足意义上的待领取任务，而是 Issue 级 single-flight：该 Issue 本轮直接跳过，水位保持不动；Runner 继续考虑其他 Issue。当前 Harness 结束后，再由后续 polling cycle 重新读取该 Issue 当时最新的控制意图。
 
 ## 多仓库公平选择
 
@@ -150,6 +177,7 @@ Runner 的本机状态必须能够支撑以下稳定语义：
 - 区分尚未领取、已领取、正在运行、已结束和结果不确定的调用；
 - 正常重启后不重放已处理命令；
 - 能重建机器级和仓库级容量判断所需的信息；
+- 能判断某个 repository + Issue 是否已有 starting / running / unknown Harness，从而维持 Issue 级 single-flight；
 - 能继续多仓库公平选择；
 - 已领取任务与尚未领取命令不能混淆；
 - GitHub 回写失败不能导致同一 Harness 调用再次执行。
