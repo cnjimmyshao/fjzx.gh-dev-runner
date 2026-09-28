@@ -50,7 +50,7 @@ GitHub 资料入口：[gh api](https://cli.github.com/manual/gh_api)、[Issues A
 
 实现保持 Issue 级 single-flight：每次准备检查某个 Issue 前，先看本机任务运行状态。若该 Issue 已有 Harness 处于 starting / running / unknown，直接跳过这个 Issue，不读取它的新评论、不更新 `eligibleCommentWatermark`、不向当前 Harness 注入消息，也不启动第二个写入者；Runner 仍继续扫描其他 Issue / 其他仓库。
 
-只有 Issue 空闲时才读取当前最新一条 eligible control comment，排除 `BOT:` 自动反馈并核对作者授权。若最新评论不新于该 Issue 的水位则忽略；若更新则把水位推进到它，然后只对这**一条当前最新评论**做 trim + `@<runnerName>` 结尾判断。是命令就 START / RESUME，不是命令就仅保存新水位。Harness 启动后水位保持在本次触发位置，直到该 Harness 明确结束；下次轮询再看那时的最新回复。Harness 运行期间的新回复不保存为待执行任务；Harness 结束后再读取当时最新的一条。
+只有 Issue 空闲时才读取当前最新一条 eligible control comment，排除 `BOT:` 自动反馈并核对作者授权。若最新评论不新于该 Issue 的水位则忽略；若更新，先对这**一条当前最新评论**做 trim + `@<runnerName>` 结尾判断，再用一次原子状态更新同时推进水位与本次执行状态：是命令就 START / RESUME，不是命令就仅保存新水位。水位推进与 starting 运行记录必须在 spawn Harness 之前一起生效；先推水位、后记运行状态会留下“命令已过水位但没有任何运行记录”的中间态，崩溃重启后这条命令被静默丢弃，先 spawn 后补记录则可能启动第二个写入者。Issue 初始 Body 的一次性检查状态同样不能先于启动记录写入。Harness 启动后水位保持在本次触发位置，直到该 Harness 明确结束；下次轮询再看那时的最新回复。Harness 运行期间的新回复不保存为待执行任务；Harness 结束后再读取当时最新的一条。
 
 验证至少覆盖：同一 Issue 运行中不会启动第二个 Harness且水位不动；与此同时其他 Issue / 其他仓库仍可正常领取；当前 Harness 结束后只依据当时最新 eligible comment 决定是否 RESUME；普通轮询和重启不会重复执行同一触发。
 
