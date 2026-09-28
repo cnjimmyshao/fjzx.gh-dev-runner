@@ -8,7 +8,7 @@
 
 ## V1 运行与分发口径
 
-V1 直接以标准 Node.js 程序运行，不把 Runner 打包成单文件可执行程序。Node.js 作为明确的本机运行时依赖；Runner 自身通过 `package.json`、依赖锁文件和正常的启动／测试命令交付。Git、已登录的 GitHub CLI（`gh`）与 Harness CLI 仍按各自方式在本机准备，不嵌入 Runner，也不因分发方便新增凭据封装。
+V1 直接以标准 Node.js 程序运行，不把 Runner 打包成单文件可执行程序。**正式运行版本统一为 Node.js 24 LTS**；24.x 内允许正常补丁／安全更新，不把某个 patch 版本写死为 Contract。Node.js 作为明确的本机运行时依赖；Runner 自身通过 `package.json`、依赖锁文件和正常的启动／测试命令交付，首次实现时在 `package.json` 的 `engines.node` 中约束为 24.x。Git、已登录的 GitHub CLI（`gh`）与 Harness CLI 仍按各自方式在本机准备，不嵌入 Runner，也不因分发方便新增凭据封装。
 
 当前不建设 Windows EXE、macOS／Linux 单文件二进制、安装器、自动更新器或 Node SEA／pkg／nexe 等打包链路。以后若多台执行电脑的实际部署成本证明单文件分发有价值，再单独开 Issue 评估支持平台、发布方式和升级策略；该未来选择不作为当前 Runner 功能开发的前置条件，也不要求现在为打包预留额外抽象。
 
@@ -18,7 +18,7 @@ V1 直接以标准 Node.js 程序运行，不把 Runner 打包成单文件可执
 
 已在本机执行电脑上按 Issue #7 完成一次性接入验证，证据见 [CLI 验证报告](research/2026-09-23-local-harness-cli-first-run-and-resume.md)。结论要点：
 
-- 实测版本 Node v26.7.0、`@deepseek-ai/dsh` 0.1.5-rc.2。**该版本的 headless CLI 只有 `[task...]` 与 `--help`**，没有上游更高版本（`0.1.6-alpha.1` 起）的 `--session-id`／`--json`，因此不能直接按上游文档调用；同目录再次调用只会新建会话。
+- **历史验证环境**实测版本为 Node v26.7.0、`@deepseek-ai/dsh` 0.1.5-rc.2；该 Node 版本只记录当时 Research 环境，不代表 Runner 的 V1 正式运行版本，V1 Contract 仍为 Node.js 24 LTS。**该版本的 headless CLI 只有 `[task...]` 与 `--help`**，没有上游更高版本（`0.1.6-alpha.1` 起）的 `--session-id`／`--json`，因此不能直接按上游文档调用；同目录再次调用只会新建会话。
 - 首轮执行、退出后续接、结构化结果与失败信号已由 [`scripts/headless-session/`](../scripts/headless-session/README.md) 在本机实测通过：它用 profile patch 把本地 runner 挂到随附的 headless profile 上，命令仍是「启动器 + headless profile」，未升级、未新增服务或端口。
 - 仍待执行的验证只在维护者日后授权升级 Harness 时才需要（届时按新版本重新实测官方 `--session-id`／`--json`，并复核 overlay 行 id）。未授权前不升级工作中的 Harness，也不改用其他界面。
 
