@@ -124,6 +124,8 @@ Reviewer 与处理 Finding 的 Implementer 使用同一标准：
 
 Maintainer 给出明确结论或有限探索授权，Coordinator 将决定记录在关联 Issue。Implementer 实际读取后落实必要文档、代码与测试，Reviewer 核对决定和验证，交接者更新该项状态。不要新建重复决策文档，也不要求人逐项批准普通实现取舍。
 
+若待决事项确实阻塞继续工作，且已经没有不依赖该决定的工作可继续，Dev 在关联 Issue 完成提问／交接后结束本轮 Harness 调用；等待人工决定不等于任务完成，原 task binding、workspace、branch、PR 与 session 保留。Dev 不在 Harness 内长期定时轮询 Issue。Maintainer 决定后，如需立即继续执行，在当前最新 eligible control comment 末尾明确写 `@<runnerName>`；Runner 后续按正常触发规则 RESUME 原 session，Dev 恢复后先刷新 Issue、PR / Review、当前 head 与 Current 再继续。
+
 分别说明实现、Review 与验收状态。影响当前验收的未决／未落实事项不得标为完成；候选实现、测试通过或 Review 无 Finding 都不替代维护者决定。无关可选增强不阻塞交付，不强迫逐项回答。
 
 ## 各类 Agent 的接入与规则版本
