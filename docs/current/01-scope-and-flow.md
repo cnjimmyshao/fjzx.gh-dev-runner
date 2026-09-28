@@ -63,6 +63,8 @@ Runner 的 GitHub 回写只覆盖自己的控制责任：合法的授权初始 B
 
 Harness 正常退出后，Runner **不**自动写 `completed`、执行结束、开发完成或模型回答摘要，也不把 stdout、exit code、`status.kind` 转述成业务结果。Runner 在本机保存完整运行追踪，包括触发来源、START/RESUME、session、启动/结束时间、运行时长、进程/退出状态、异常摘要及必要恢复信息；这些技术状态用于去重、释放执行状态、正确续接和故障诊断，不等于需要公开到 GitHub。业务完成、测试结果、PR、Review 修复与待维护者决定的问题，由 Dev 在 Harness 会话中按目标项目规则直接处理。
 
+Dev 若因必须等待 Maintainer 决定而无法继续，应在原关联 Issue 交接待决问题后结束本轮 Harness，而不是保持 Harness 长期运行并自行轮询 Issue。该退出只释放本轮运行态，不删除 task binding、workspace、branch、已有 PR 或 session。Maintainer 后续回复本身不自动恢复工作；需要继续时，由当前最新 eligible control comment 以 `@<runnerName>` 结尾形成新的执行请求，Runner 在正常 polling 中识别后 RESUME 原 session。
+
 问题归档到任务所属 Issue，不能把私有任务内容转贴到本公开工具仓库。保留必要本机日志，不默认把完整模型输出公开。GitHub 上的“已开始工作”只表示 Runner 已成功启动正确的 Harness 调用，不表示 Dev 已完成任务。
 
 ## 首版不做
