@@ -152,7 +152,7 @@ V1 保持简单，并把 Issue Body、空闲 Comment 检查和运行中跳过分
 2. Issue 空闲时，读取当前最新一条 eligible control comment：排除 trim 后以 `BOT:` 开头的 Runner 自动反馈，并确认作者属于授权主体；
 3. 若该 comment identity 不新于 `eligibleCommentWatermark`，不做任何事；
 4. 若它更新，先判断正文 trim 后是否以 `@${runnerName}` 结尾；
-5. 用一次原子状态更新同时推进 `eligibleCommentWatermark` 与本次执行状态：是命令则记录该 Issue 已进入 starting 并 START / RESUME；不是命令则只推进水位，不记录执行状态。该更新只在该 Issue 此刻仍无运行记录、且这条评论仍是刚才读到的那一个 eligible 候选时才生效，并明确只有写入成功的那个执行者可以 spawn Harness；条件不成立表示这次触发已被别的执行者领取，本次不做任何事、也不 spawn。
+5. 用一次原子状态更新同时推进 `eligibleCommentWatermark` 与本次执行状态：是命令则记录该 Issue 已进入 starting 并 START / RESUME；不是命令则只推进水位，不记录执行状态。该更新只在该 Issue 此刻仍无运行记录、该 Issue 的水位仍等于读取候选时的旧值、且这条评论仍是刚才读到的那一个 eligible 候选时才生效，并明确只有写入成功的那个执行者可以 spawn Harness；条件不成立表示这次触发已被别的执行者领取，本次不做任何事、也不 spawn。水位也必须作为前提一起校验：只检查“仍无运行记录”会漏掉一种情况——赢家已经跑完并释放运行状态，落后的执行者这时再进入本步，运行记录与候选都还对得上，却没有发现自己读到的那条评论早已被处理过，于是同一条命令被再执行一次。
 
 这两处都不能拆成“先推进水位／先标记 Body 已检查，再记录 starting 后启动”，也不能反过来先 spawn Harness、之后再补记录 claim / starting。Runner 在两次写入之间崩溃时，重启后这条触发已经不新于水位、或 Body 已经算检查过，而该 Issue 又没有任何运行记录，于是命令被永久静默丢弃。反过来先启动 Harness 再补记录，重启后又会因为查不到运行记录而重新领取同一 Issue，可能启动第二个写入者。因此水位推进／Body 检查状态与本次执行的持久化必须一起生效，且发生在 spawn 之前：写入成功才允许 spawn。
 
