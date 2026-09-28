@@ -139,7 +139,7 @@ V1 保持简单，并把 Issue Body、空闲 Comment 检查和运行中跳过分
 
 1. 仅在 Issue 初次处理时检查，确认创建者属于授权主体；
 2. 读取 Body 原文并执行 trim，判断是否以 `@${runnerName}` 结尾；
-3. 原子记录 Body 已检查：如果是命令，同一次更新还要记录该 Issue 已进入 starting、建立 task binding 并启动 Harness；
+3. 以条件式原子更新记录 Body 已检查：只在该 Issue 此刻仍无运行记录、且 Body 尚未被检查过时生效；如果是命令，同一次更新还要记录该 Issue 已进入 starting、建立 task binding 并启动 Harness。条件不成立时本次不 spawn；
 4. Body 之后不因重复扫描或编辑重新触发。
 
 **Comment：**
@@ -148,11 +148,11 @@ V1 保持简单，并把 Issue Body、空闲 Comment 检查和运行中跳过分
 2. Issue 空闲时，读取当前最新一条 eligible control comment：排除 trim 后以 `BOT:` 开头的 Runner 自动反馈，并确认作者属于授权主体；
 3. 若该 comment identity 不新于 `eligibleCommentWatermark`，不做任何事；
 4. 若它更新，先判断正文 trim 后是否以 `@${runnerName}` 结尾；
-5. 用一次原子状态更新同时推进 `eligibleCommentWatermark` 与本次执行状态：是命令则记录该 Issue 已进入 starting 并 START / RESUME；不是命令则只推进水位，不记录执行状态。
+5. 用一次原子状态更新同时推进 `eligibleCommentWatermark` 与本次执行状态：是命令则记录该 Issue 已进入 starting 并 START / RESUME；不是命令则只推进水位，不记录执行状态。该更新只在该 Issue 此刻仍无运行记录、且 comment identity 仍等于刚才读到的候选时才生效，并明确只有写入成功的那个执行者可以 spawn Harness；条件不成立表示这次触发已被别的执行者领取，本次不做任何事、也不 spawn。
 
 这两处都不能拆成“先推进水位／先标记 Body 已检查，再记录 starting 后启动”。Runner 在两次写入之间崩溃时，重启后这条触发已经不新于水位、或 Body 已经算检查过，而该 Issue 又没有任何运行记录，于是命令被永久静默丢弃。反过来先启动 Harness 再补记录，重启后又会因为查不到运行记录而重新领取同一 Issue，可能启动第二个写入者。因此水位推进／Body 检查状态与本次执行的持久化必须一起生效，且发生在 spawn 之前。
 
-原子更新只把“已经领取这次触发”持久化下来，不新增运行期间的状态。Runner 若恰好在这个窗口内崩溃，留下的就是 starting / unknown 运行记录，重启后按本节后面的规则跳过该 Issue，等待进程探测或明确人工恢复，而不是重新读取评论。具体持久化形式仍由本地状态 Contract 决定，这里只要求这两项状态同时生效。
+原子和条件是两个要求，分别解决两个窗口：原子解决两次写入之间崩溃，条件解决两个执行者先后通过空闲检查、再各自写入而双双认为领取成功。只有检查与写入在同一临界区内完成，从空闲到 starting 的转移才只有一个执行者能成功。具体持久化形式和互斥方式由本地状态 Contract 决定，这里只要求这两项状态同时生效，且领取是条件式的。
 
 V1 不解析 GitHub 的真实 mention，不依赖通知事件，也不为了 Markdown 引用、代码块等情况建设额外语法解析器。
 
