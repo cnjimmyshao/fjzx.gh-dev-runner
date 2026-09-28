@@ -16,7 +16,7 @@
 
 本地按配置周期检查已接入仓库的新增内容，不用 Actions 定时扫描，也不为每次空检查调用模型。读取增量而非反复重读全部 Issue；初次启动不把历史命令全部重放。
 
-每台 Runner 在本机配置自己的 `runnerName`。V1 一个 Issue 的当前 task binding 只归一个 Runner，不让多台机器同时处理同一 Issue；换 Runner 必须由维护者明确迁移绑定。对每个 Issue 只保留一个当前触发候选：创建时只接受授权主体的初始 Issue Body；进入评论阶段后，只看当前最新一条 eligible control comment，也就是“授权主体发布且不是 Runner 自动反馈”的普通评论。所有 Runner 自动反馈统一以保留前缀 `BOT:<runnerName>` 开头，任何 `BOT:` 评论都不参与候选选择。候选正文 trim 后只有以 `@<runnerName>` 结尾，才表示请求该机器现在开始或继续工作。更早的授权评论不排队、不补执行；如果原来的 `@MB01` 后来被授权主体新的普通回复覆盖，它就自然失效。完整规则见 [Runner 激活与任务触发 Contract](03-runner-trigger.md)。
+每台 Runner 在本机配置自己的 `runnerName`。V1 一个 Issue 的当前 task binding 只归一个 Runner，不让多台机器同时处理同一 Issue；换 Runner 必须由维护者明确迁移绑定。新建 Issue 时只检查一次授权主体的初始 Issue Body；进入评论阶段后，只在该 Issue **没有正在运行的 Harness** 时检查当前最新一条 eligible control comment，也就是“授权主体发布且不是 Runner 自动反馈”的普通评论。所有 Runner 自动反馈统一以保留前缀 `BOT:<runnerName>` 开头并从候选中排除。候选正文 trim 后只有以 `@<runnerName>` 结尾，才表示请求该机器现在开始或继续工作。运行中的 Issue 直接跳过，不读取它的新评论、不推进它的触发水位；当前 Harness 结束后，下一次轮询才重新读取当时的最新评论。完整规则见 [Runner 激活与任务触发 Contract](03-runner-trigger.md)。
 
 示意链路（尚未实现）：
 
@@ -33,7 +33,7 @@
 → Runner 本机记录启动、运行、结束与异常轨迹
 ```
 
-同一当前候选不重复执行，同一任务不同时启动两个写入者。任务正在执行时不能另开进程或会话抢写同一分支；Runner 仍可继续观察新的授权评论，但只保留一个“下一步候选”，不维护 pending 队列。每个 Issue 用单调前进的 `eligibleCommentWatermark` 表示评论看到哪里；`lastTrigger(status=observed)` 只保存当前唯一、尚未开始的候选。真正启动前，Runner 必须把该 trigger 原子转入独立的 `activeRuns(status=starting)` 并消费 `lastTrigger`，之后 starting/running/unknown 的恢复状态只由 `activeRuns` 保存。新的授权普通回复会推进水位并清除尚未开始的 Body/Comment 候选；新的命令回复会替换成最新候选，但都不得覆盖已经存在的 active run。当前 active run 结束后再重新核对最新候选并决定是否启动下一轮。启动失败不自动重试已消费候选。具体机器级／仓库级容量与领取规则由调度 Contract 负责。多台电脑的 Runner 名称由部署者保持唯一，不建设分布式选主。
+同一任务同一时刻只允许一个 Harness 写入者。某个 Issue 已有 Harness 处于 starting / running / unknown 时，Runner 对这个 Issue 只做“正在运行，跳过”的判断，不再读取或解释该 Issue 的 GitHub 新内容，也不推进其评论水位；这不会阻塞 Runner 继续轮询和处理其他 Issue / 其他仓库。该 Harness 明确结束并释放任务级运行状态后，下一次轮询再从原水位出发读取该 Issue 当时最新的 eligible control comment：最新回复以 `@<runnerName>` 结尾则 RESUME 原 task / workspace / session；否则只推进水位，不启动 Harness。运行期间出现的中间旧评论不排队、不补执行。具体机器级／仓库级容量与领取规则由调度 Contract 负责。多台电脑的 Runner 名称由部署者保持唯一，不建设分布式选主。
 
 ## 会话与工作目录
 
