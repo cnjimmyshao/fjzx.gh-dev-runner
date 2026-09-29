@@ -134,7 +134,7 @@ export function createGithubClient(options = {}) {
       if (batch.length < pageSize) return { items, truncated: false };
     }
     // 最后一页恰好填满并不等于一定还有数据；额外探测一页，避免“恰好上限”永久卡住 baseline。
-    const probeQuery = new URLSearchParams({ ...params, per_page: '1', page: String(maxPages + 1) });
+    const probeQuery = new URLSearchParams({ ...params, per_page: String(pageSize), page: String(maxPages + 1) });
     const probe = await apiGet(`${pathname}?${probeQuery.toString()}`);
     if (!Array.isArray(probe)) {
       throw new GithubError('gh api 分页探测预期返回数组，实际不是', { kind: 'invalid_response' });
@@ -169,14 +169,14 @@ export function createGithubClient(options = {}) {
     },
 
     /**
-     * 列出该仓库当前全部打开的 Issue（baseline 与历史初始化用，排除 PR）。
+     * 列出该仓库当前全部 Issue（open + closed；baseline 用，排除 PR），确保未来 reopen 不复活历史命令。
      * @param {string} repo
      * @param {{pageSize?: number, maxPages?: number}} [listOptions]
      */
     async listOpenIssues(repo, listOptions = {}) {
       const result = await apiList(
         `repos/${repo}/issues`,
-        { state: 'open', sort: 'updated', direction: 'asc' },
+        { state: 'all', sort: 'updated', direction: 'asc' },
         listOptions,
       );
       return {
