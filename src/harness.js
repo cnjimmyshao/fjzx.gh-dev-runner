@@ -385,7 +385,9 @@ export function createHarnessRunner(options) {
       if (!Number.isInteger(pid) || pid <= 0) return 'unknown';
       const result = await execFn('ps', ['-o', 'lstart=', '-p', String(pid)], { timeoutMs: 10_000 });
       if (result.code !== 0) {
-        return result.stderr.trim() === '' ? 'gone' : 'unknown';
+        // 只有明确的“进程不存在”才释放槽位；超时、被杀、权限/系统错误一律 unknown 保守占槽。
+        if (result.notFound === true) return 'gone';
+        return 'unknown';
       }
       const current = result.stdout.trim();
       if (signature === null || signature === undefined || signature === '') return 'unknown';
@@ -546,6 +548,10 @@ function defaultExec(bin, args, options = {}) {
           code: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
           stdout: stdout ?? '',
           stderr: stderr ?? '',
+          killed: Boolean(error?.killed),
+          timedOut: Boolean(error?.killed && options.timeoutMs),
+          // ps 对不存在 PID 的正常表现由调用环境决定；仅显式可识别时标记，其他失败保持 unknown。
+          notFound: Boolean(error && !error.killed && /no such process|not found/i.test(String(stderr ?? error.message ?? ''))),
         });
       });
     } catch (error) {
