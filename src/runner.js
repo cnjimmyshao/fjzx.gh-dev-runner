@@ -322,6 +322,12 @@ export function createRunner(deps) {
     }
 
     const completedAt = nowIso();
+    const baselineObservedTimes = listed.items
+      .map((issue) => Date.parse(issue.updated_at ?? ''))
+      .filter(Number.isFinite);
+    const baselineObservedAt = baselineObservedTimes.length === 0
+      ? null
+      : new Date(Math.max(...baselineObservedTimes)).toISOString();
     await store.update((draft) => {
       const record = repositoryState(draft, repo);
       for (const entry of entries) {
@@ -332,7 +338,7 @@ export function createRunner(deps) {
       }
       record.baselineCompleted = true;
       record.baselineCompletedAt = completedAt;
-      record.lastScanAt = completedAt;
+      record.lastScanAt = baselineObservedAt;
     });
 
     audit.append({ event: 'baseline_completed', repository: repo, issues: entries.length, at: completedAt });
@@ -363,9 +369,21 @@ export function createRunner(deps) {
     const observedTimes = listed.items
       .map((issue) => Date.parse(issue.updated_at ?? ''))
       .filter(Number.isFinite);
-    const serverObservedAt = observedTimes.length === 0
+    const activeSkippedTimes = listed.items
+      .filter((issue) => activeRunForIssue(store.read(), repo, issue.number))
+      .map((issue) => Date.parse(issue.updated_at ?? ''))
+      .filter(Number.isFinite);
+    const maxObservedMs = observedTimes.length === 0 ? null : Math.max(...observedTimes);
+    const earliestSkippedMs = activeSkippedTimes.length === 0 ? null : Math.min(...activeSkippedTimes);
+    // 不能越过尚未处理的 active Issue；保留 1 秒重叠，宁可重扫。
+    const safeObservedMs = maxObservedMs === null
+      ? null
+      : earliestSkippedMs === null
+        ? maxObservedMs
+        : Math.min(maxObservedMs, Math.max(0, earliestSkippedMs - 1_000));
+    const serverObservedAt = safeObservedMs === null
       ? lastScanAt
-      : new Date(Math.max(...observedTimes)).toISOString();
+      : new Date(safeObservedMs).toISOString();
 
     for (const issue of listed.items) {
       const result = await considerIssue(repository, issue, since ?? serverObservedAt ?? lastScanAt);
