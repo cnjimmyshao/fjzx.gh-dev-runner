@@ -45,6 +45,8 @@ Status: VERIFIED（范围限本文记录的时间、版本、电脑、调用路�
 
 它只给子进程最小环境（`PATH`／`HOME`／`TMPDIR`／`LANG` 等 + 显式 `DSH_HOME` + `DSH_TELEMETRY_DISABLED=1` + 场景自带变量），从不继承探针自身的完整环境——正在工作的 Harness 导出了 `DSH_SESSION_ID`／`DSH_PROFILE` 等变量，不能带进测试进程。
 
+探针版本：本文场景由同一探针运行，提交版本在其上增加了 `killAtMs` 强杀支持，并把"进程启动"与"外部锁校验"放进同一条时间线（早期版本会先把所有进程排完再执行校验）。没有外部锁校验的场景不受该调整影响，提交后已用最终版本重跑一次代表性并发场景（2 个进程仍都退出 0、session 各自独立、stderr 为空）；唯一受影响的强杀场景已用最终版本重跑，本文记录的 4003／6550ms 校验时刻即该次结果。
+
 ```bash
 # 1) 测试根目录与共享 home；凭据按受支持方式复制，值不进入命令行与输出
 mkdir -p <testroot>/dsh-home <testroot>/workdir-a <testroot>/workdir-b
