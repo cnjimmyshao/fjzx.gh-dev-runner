@@ -105,7 +105,7 @@ runner:mb01 + @dev
 
 Body 是一次性入口：Runner 只读取并判断一次，之后就按这次结果处理。后续编辑既不撤销、也不重新触发、更不重新评估——把命令删掉不会取消已读到的请求，把命令加上去也不会被当成新请求；需要改变意图时发布新评论，评论才是活的控制通道。重复扫描同样不会再次触发。
 
-已有 Issue 进入评论阶段后，V1 只在该 Issue **当前没有正在运行的 Harness** 时读取它的控制内容，并且只检查当前最新一条 eligible control comment（**尚未被扫描水位越过**的那一条）。更早的 eligible control comment 即使以 `@<runnerName>` 结尾，也不排队、不补执行。
+已有 Issue 进入评论阶段后，V1 只在该 Issue **当前没有正在运行的 Harness** 时读取它的控制内容，并且只读取当前最新一条**尚未被扫描水位越过的评论**；推进扫描水位后，再判断它是否属于 eligible control comment 以及是否满足命令语法。更早的 eligible control comment 即使以 `@<runnerName>` 结尾，也不排队、不补执行。
 
 如果这个 Issue 已经有 Harness 处于 starting / running / unknown：
 
