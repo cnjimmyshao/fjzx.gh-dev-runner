@@ -230,6 +230,9 @@ export function repositoryState(state, repo) {
 export function pruneEndedRuns(state, now = Date.now()) {
   for (const [runId, run] of Object.entries(state.activeRuns)) {
     if (ACTIVE.has(run.status)) continue;
+    if (typeof run.feedbackExpectation === 'string'
+      && run.feedback?.[run.feedbackExpectation] !== true
+      && run.feedbackAbandoned !== true) continue;
     const endedAt = Date.parse(run.endedAt ?? run.startedAt ?? '') || 0;
     if (now - endedAt > ENDED_RUN_RETENTION_MS) delete state.activeRuns[runId];
   }
