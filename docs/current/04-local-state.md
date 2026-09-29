@@ -63,7 +63,9 @@ activeRuns
 
 repositories
 └── owner/repo
-    └── "<issueNumber>"
+    ├── baselineCompleted
+    └── issues
+        └── "<issueNumber>"
         ├── issueBodyHandled
         ├── commentScanWatermark
         ├── lastTrigger
@@ -98,7 +100,9 @@ repositories
   },
   "repositories": {
     "owner/project": {
-      "42": {
+      "baselineCompleted": true,
+      "issues": {
+        "42": {
         "issueBodyHandled": true,
         "commentScanWatermark": "123456",
         "lastTrigger": {
@@ -284,17 +288,20 @@ Contract 因此要求：
 
 ## 首次接入与历史扫描基线
 
-首次为一个已经存在内容的仓库／Issue 建立本机状态时，**不得把接入前的历史 Body 或历史评论当成新执行请求重放**。
+新仓库第一次加入 Runner 时，先做一次**简单的全量历史 baseline**；baseline 完成以前，该仓库尚未进入正式接单状态，Runner **不接受也不保证保留这段初始化期间出现的触发**。
 
-V1 采用简单的 baseline 规则：
+V1 只需要一个仓库级完成状态，例如 `baselineCompleted: false | true`，不保存 Issue cutoff、初始化 cursor、pending 命令、快照队列或复杂恢复状态机：
 
-- 对首次发现的既有 Issue，把当时读取到的初始 Body 记为已处理，不因其中历史 `@<runnerName>` 启动 Harness；
-- 把 baseline 快照中当时最新的 Comment identity 写入 `commentScanWatermark`；没有评论则保持空水位；
-- baseline 建立本身不写 `lastTrigger`、不建立 active run，也不发送接单反馈；
-- baseline 的读取与落盘必须有明确边界：落盘前若发现扫描终点已经变化，则重新读取并建立 baseline；只有成功写入 baseline **之后新增**的评论才进入正常触发扫描。这样既不回放历史，也不会因为 baseline 建立期间出现新评论而把真正的新命令静默越过；
-- 新建 Issue 的正常一次性 Body 触发不属于“首次接入历史 baseline”：Runner 已经运行并观察到的新 Issue 仍按 Trigger Contract 正常判断 Body。
+1. 新仓库首次接入时先持久化 `baselineCompleted=false`；
+2. 读取该仓库当前已有的 Issue；对这些 Issue 把初始 Body 记为已处理，并把当时最新评论写入各自的 `commentScanWatermark`，不执行其中任何历史 `@<runnerName>`；
+3. baseline 本身不写 `lastTrigger`、不建立 active run，也不发送接单反馈；
+4. 全部 baseline 成功落盘后，再把仓库级 `baselineCompleted=true`；**只有此后**该仓库才进入正常增量轮询和 Trigger Contract；
+5. baseline 过程中 Runner 崩溃或中断时，`baselineCompleted` 仍为 false。下次启动直接**从头重做整个 baseline**，不恢复“做到哪个 Issue”的进度；
+6. baseline 初始化期间恰好出现的 Issue／评论可能在重做或完成 baseline 时被视为历史而不执行，这是 V1 明确接受的低频人工边界。需要可靠执行时，在 `baselineCompleted=true` 后重新发布新的 `@<runnerName>` 控制评论。
 
-baseline 只解决“首次接入不重放历史”，不引入历史命令队列，也不改变后续 `commentScanWatermark` 的单调扫描语义。
+这个取舍刻意把首次接入定义成“初始化完成后才正式启用”。它避免为极少发生的首次初始化崩溃／并发新增场景引入仓库快照边界、Issue cutoff、恢复 cursor 或 pending queue。人工重新发布一次命令是允许的恢复方式。
+
+正常运行中的新 Issue 不属于 baseline：仓库一旦 `baselineCompleted=true`，后续新 Issue 的一次性 Body 与评论都按 Trigger Contract 正常处理。
 
 ## 版本与兼容
 
