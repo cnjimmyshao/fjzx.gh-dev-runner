@@ -118,14 +118,11 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
   }
 
   checkEnvironment(config, deps);
+  // 单写入者规则保持粗暴：先取得纯 wx 实例锁，再加载 state；锁存在就拒绝启动，不自动接管。
+  const lock = acquireInstanceLock(config.runtime.stateDir, deps);
+  process.once('exit', () => lock.release());
   const store = new StateStore(config.runtime.stateDir);
   store.load();
-
-  const lock = acquireInstanceLock(config.runtime.stateDir, deps);
-  // 只要本进程还可能写状态，锁就必须留着：子进程仍在运行时提前释放会让第二个 Runner 同时写 state.json。
-  process.once('exit', () => lock.release());
-  // 每次写盘前复核锁归属：锁被并发接管后立即停止覆盖状态，而不是继续当第二个写入者。
-  store.setOwnershipCheck(() => lock.assertHeld());
   const github = deps.github ?? createGithubClient({
     timeoutMs: config.github.timeoutMs,
     pageSize: config.github.pageSize,
@@ -240,9 +237,9 @@ async function runCycleSafely(runner, logger, audit) {
  */
 async function runResolveCommand(options, config, stdout, deps) {
   fs.mkdirSync(config.runtime.stateDir, { recursive: true });
+  const lock = acquireInstanceLock(config.runtime.stateDir, deps);
   const store = new StateStore(config.runtime.stateDir);
   store.load();
-  const lock = acquireInstanceLock(config.runtime.stateDir, deps);
   const audit = createAuditLog(config.runtime.stateDir);
   try {
     let code;
