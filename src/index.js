@@ -154,9 +154,11 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
   logger.info(`Runner ${config.runnerName} 启动（pid ${process.pid}，轮询 ${config.runtime.pollSeconds}s）`);
 
   let stopping = false;
+  let wakePolling = null;
   const stop = () => {
     if (stopping) return;
     stopping = true;
+    wakePolling?.();
     logger.info('收到退出信号：停止轮询；已在运行的 Harness 不杀，交由下次启动恢复核对');
   };
   const signalHandler = () => stop();
@@ -174,7 +176,16 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
         break;
       }
       if (options.once) break;
-      if (!stopping) await delay(config.runtime.pollSeconds * 1_000);
+      if (!stopping) {
+        await new Promise((resolve) => {
+          const timer = setTimeout(resolve, config.runtime.pollSeconds * 1_000);
+          wakePolling = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+        });
+        wakePolling = null;
+      }
     } while (!stopping);
 
     // `--once` 默认等本轮领取的 Harness 结束；收到退出信号时只等一段有限宽限期。
