@@ -34,6 +34,10 @@ const SYSTEM_ENV_KEYS = [
   'SHELL',
   'TERM',
   'TZ',
+  // 非 token 的凭据/agent 定位变量：保持父进程与 Harness 内 gh/git 的认证位置一致。
+  'GH_CONFIG_DIR',
+  'XDG_CONFIG_HOME',
+  'SSH_AUTH_SOCK',
 ];
 
 /** 事件流轮询间隔：只用于尽早取得 sessionId 与早期判据，不影响子进程执行。 */
