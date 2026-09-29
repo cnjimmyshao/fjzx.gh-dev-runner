@@ -50,7 +50,7 @@ Status: VERIFIED（范围限本文记录的时间、版本、电脑、调用路�
 Review 后另有两处按根因修复，结论与上表数字不变：
 
 - `session-log-integrity.mjs` 改为按 Zstandard 帧结构（RFC 8878 帧头 + 块头）走帧，而不是扫描魔数：Node 的 `zstdDecompressSync` 对截断帧返回部分输出而不报错，且魔数可能出现在压缩负载内部，因此"解码成功"与"魔数命中"都无法可靠区分真实帧边界。现在任何结构性损伤（缺魔数、帧头／块头／校验和越界）、解压失败、JSON 解析错误或头部 `id` 与目录名不一致都以非 0 退出。用四类构造输入核对：中间帧负载损坏（校验和不匹配）、中间截断、末帧截断、块头损坏——修复前全部被判成 OK，修复后全部判 BAD 并退出 1，完好日志仍判 OK；结构走帧与旧魔数扫描在该次比对涉及的 14 个完好日志上给出完全一致的帧数与事件数。
-- `shared-home-concurrency-probe.mjs` 在 spawn 失败路径同样结算 entry、关闭句柄并写出报告：用不存在的工作目录复现时，修复前进程以 unsettled top-level await 退出 13 且没有 `report.json`，修复后 0.07s 内写出带 `spawnError` 的报告并退出 1。
+- `shared-home-concurrency-probe.mjs` 在 spawn 失败路径同样结算 entry、关闭句柄并写出报告：用不存在的工作目录复现时，修复前进程以 unsettled top-level await 退出 13 且没有 `report.json`，修复后 0.07s 内写出带 `spawnError` 的报告并退出 1。同一根因还覆盖外部锁校验拉起的 `python3`（解释器不可用时同样记 `spawnError`、报告照常落盘并退出 1，而不是挂起）。
 
 ```bash
 # 1) 测试根目录与共享 home；凭据按受支持方式复制，值不进入命令行与输出
