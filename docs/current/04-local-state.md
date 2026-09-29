@@ -103,30 +103,31 @@ repositories
       "baselineCompleted": true,
       "issues": {
         "42": {
-        "issueBodyHandled": true,
-        "commentScanWatermark": "123456",
-        "lastTrigger": {
-          "sourceType": "comment",
-          "sourceId": "123456",
-          "author": "maintainer-login",
-          "status": "starting",
-          "at": "2026-09-24T00:10:00.000Z",
-          "feedbackSent": false
-        },
-        "binding": {
-          "runnerName": "MB01",
-          "dir": "<本机绝对任务目录>",
-          "sessionId": null,
-          "branch": "fjzx/issue-42",
-          "source": "<本机源仓库目录>",
-          "worktreeCreated": true,
-          "createdAt": "2026-09-24T00:10:00.000Z"
-        },
-        "lastRun": {
-          "at": "2026-09-24T00:10:00.000Z",
-          "dir": "<本机绝对任务目录>",
-          "runDir": "<本机日志目录>",
-          "exitCode": null
+          "issueBodyHandled": true,
+          "commentScanWatermark": "123456",
+          "lastTrigger": {
+            "sourceType": "comment",
+            "sourceId": "123456",
+            "author": "maintainer-login",
+            "status": "starting",
+            "at": "2026-09-24T00:10:00.000Z",
+            "feedbackSent": false
+          },
+          "binding": {
+            "runnerName": "MB01",
+            "dir": "<本机绝对任务目录>",
+            "sessionId": null,
+            "branch": "fjzx/issue-42",
+            "source": "<本机源仓库目录>",
+            "worktreeCreated": true,
+            "createdAt": "2026-09-24T00:10:00.000Z"
+          },
+          "lastRun": {
+            "at": "2026-09-24T00:10:00.000Z",
+            "dir": "<本机绝对任务目录>",
+            "runDir": "<本机日志目录>",
+            "exitCode": null
+          }
         }
       }
     }
