@@ -238,10 +238,10 @@ async function runCycleSafely(runner, logger, audit) {
 async function runResolveCommand(options, config, stdout, deps) {
   fs.mkdirSync(config.runtime.stateDir, { recursive: true });
   const lock = acquireInstanceLock(config.runtime.stateDir, deps);
-  const store = new StateStore(config.runtime.stateDir);
-  store.load();
-  const audit = createAuditLog(config.runtime.stateDir);
   try {
+    const store = new StateStore(config.runtime.stateDir);
+    store.load();
+    const audit = createAuditLog(config.runtime.stateDir);
     let code;
     if (options.command === 'resolve-run') {
       code = await resolveRun(options, store, stdout);
