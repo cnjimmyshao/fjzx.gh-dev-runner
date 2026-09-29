@@ -18,4 +18,4 @@ Runner 启动 Harness 时只传递正常启动所需的最小系统环境、明�
 
 本 ADR 只替代 ADR 0002 中“谁保存／提供模型凭据”的责任划分，不改变 ADR 0002 选择 headless CLI、放弃 Web 接入依赖等其它历史决定。
 
-若实际 Harness 版本只能通过子进程环境取得某项凭据，Runner 可以显式传递该 Harness 所需变量，但这不使 Runner 成为该凭据的第二个持久化存储。
+若实际 Harness 版本只能通过子进程环境取得某项凭据，Runner 可以把明确 allowlist 中的对应环境变量从父进程**原样透传**给 Harness 子进程；Runner 不解析其值、不记录、不持久化，也不把它转换成 Runner 自己的配置字段。这种受控透传不使 Runner 成为凭据管理者或第二个凭据存储。
