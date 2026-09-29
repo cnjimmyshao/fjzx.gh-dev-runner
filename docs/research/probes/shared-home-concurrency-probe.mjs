@@ -36,9 +36,15 @@
  * events (session id, turn end reason, final text) and lease-check results.
  *
  * Exit status: 0 when every scheduled process was spawned (whatever it then
- * did, including being killed); 1 when any process — or any lease-check
- * interpreter — failed to spawn, which is an infrastructure failure rather than
- * a scenario outcome. The report is written in both cases.
+ * did, including being killed) and every lease check produced a verdict; 1 on
+ * any infrastructure failure — a process or lease-check interpreter that could
+ * not be spawned, or a lease check that exited without an `acquired` verdict.
+ * The report is written in both cases.
+ *
+ * The scenario must give every process a unique `label` (they share the output
+ * directory) and must not set `DSH_HOME` or `DSH_TELEMETRY_DISABLED` in a
+ * process `env`: the probe owns those, so a test can never be pointed at
+ * another home. A violation exits 2 before anything runs.
  *
  * A `leaseChecks` entry shells out to `python3` (non-blocking `fcntl.flock`),
  * the probe's only external dependency beyond the Node runtime and the dsh
@@ -60,16 +66,32 @@ const outDir = resolve(scenario.outDir);
 const dshHome = resolve(scenario.dshHome);
 mkdirSync(outDir, { recursive: true });
 
+/** Environment keys the probe owns: a scenario must not redirect isolation. */
+const RESERVED_ENV = ['DSH_HOME', 'DSH_TELEMETRY_DISABLED'];
+const processSpecs = scenario.processes ?? [];
+const labels = new Set();
+for (const spec of processSpecs) {
+  if (labels.has(spec.label)) {
+    console.error(`scenario has two processes labelled "${spec.label}": they would share one stdout/stderr pair and clobber each other's evidence`);
+    process.exit(2);
+  }
+  labels.add(spec.label);
+  for (const key of RESERVED_ENV) {
+    if (spec.env !== undefined && key in spec.env) {
+      console.error(`scenario process "${spec.label}" sets reserved ${key}; the probe owns ${RESERVED_ENV.join(' / ')} so a test can never be pointed at another home`);
+      process.exit(2);
+    }
+  }
+}
+
 /** Minimal child environment: OS basics plus the Harness home for this test. */
 function childEnv(extra) {
   const env = {};
   for (const key of ['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'SHELL']) {
     if (process.env[key] !== undefined) env[key] = process.env[key];
   }
-  env.DSH_HOME = dshHome;
-  // Never send session prefixes to the telemetry endpoint from a test run.
-  env.DSH_TELEMETRY_DISABLED = '1';
-  return { ...env, ...(extra ?? {}) };
+  // Reserved keys are written last even though the scenario is validated above.
+  return { ...env, ...(extra ?? {}), DSH_HOME: dshHome, DSH_TELEMETRY_DISABLED: '1' };
 }
 
 const now = () => Number(process.hrtime.bigint() / 1000000n);
@@ -211,20 +233,20 @@ function parseRunEvents(stdoutPath, args) {
   return { sessionId, turnEndReason, finalText, toolCalls };
 }
 
-const schedule = [...(scenario.processes ?? [])].sort((a, b) => (a.atMs ?? 0) - (b.atMs ?? 0));
+const schedule = [...processSpecs].sort((a, b) => (a.atMs ?? 0) - (b.atMs ?? 0));
 const checks = [...(scenario.leaseChecks ?? [])].sort((a, b) => a.atMs - b.atMs);
 // One shared timeline: spawns and lease checks interleave in scheduled order,
 // so a check scheduled while a process runs really runs inside that window.
+// Each wait is measured against the clock, never against the previous planned
+// time: an overrunning step (a lease check shells out to python3) must not push
+// later events out of their intended window.
 const timeline = [
   ...schedule.map((spec) => ({ atMs: spec.atMs ?? 0, spawn: spec })),
   ...checks.map((spec) => ({ atMs: spec.atMs, leaseCheck: spec })),
 ].sort((a, b) => a.atMs - b.atMs);
-let elapsed = 0;
 for (const step of timeline) {
-  if (step.atMs > elapsed) {
-    await sleep(step.atMs - elapsed);
-    elapsed = step.atMs;
-  }
+  const wait = step.atMs - (now() - t0);
+  if (wait > 0) await sleep(wait);
   if (step.spawn !== undefined) startProcess(step.spawn);
   else await runLeaseCheck(step.leaseCheck);
 }
@@ -254,17 +276,23 @@ for (const entry of processes) {
 for (const check of leaseChecks) {
   console.log(`${check.label}: lease acquired=${check.acquired} at=${check.ranAtMs}ms`);
 }
-// A process that never started is an infrastructure failure, not a scenario
-// outcome: keep the report, but exit non-zero so the caller notices. The same
-// applies to a lease check whose interpreter is missing.
+// A process that never started, or a lease check that produced no verdict, is
+// an infrastructure failure rather than a scenario outcome: keep the report,
+// but exit non-zero so the caller notices.
 const spawnFailures = [
   ...processes.filter((entry) => entry.spawnError !== undefined),
-  ...leaseChecks.filter((check) => check.spawnError !== undefined),
+  ...leaseChecks.filter(
+    (check) => check.spawnError !== undefined || check.exitCode !== 0 || typeof check.acquired !== 'boolean',
+  ),
 ];
 for (const entry of processes) {
   if (entry.spawnError !== undefined) console.log(`${entry.label}: SPAWN ERROR ${entry.spawnError.code}: ${entry.spawnError.message}`);
 }
 for (const check of leaseChecks) {
-  if (check.spawnError !== undefined) console.log(`${check.label}: LEASE CHECK SPAWN ERROR ${check.spawnError.code}: ${check.spawnError.message}`);
+  if (check.spawnError !== undefined) {
+    console.log(`${check.label}: LEASE CHECK SPAWN ERROR ${check.spawnError.code}: ${check.spawnError.message}`);
+  } else if (check.exitCode !== 0 || typeof check.acquired !== 'boolean') {
+    console.log(`${check.label}: LEASE CHECK FAILED exit=${check.exitCode} acquired=${check.acquired} ${check.stderr ?? ''}`.trim());
+  }
 }
 process.exitCode = spawnFailures.length === 0 ? 0 : 1;

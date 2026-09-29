@@ -17,9 +17,12 @@
  *   <node> session-log-integrity.mjs <dsh-home> [<dsh-home> ...]
  *
  * Exit status: 0 only when every log is structurally whole, decodes, parses,
- * and carries a header matching its directory; 1 when any log shows damage
- * (missing magic, truncated header/block/checksum, failing decompression),
- * a JSON parse error, or a header/directory mismatch.
+ * and carries a header matching its directory, and every given root could be
+ * examined; 1 when any log shows damage (missing magic, truncated
+ * header/block/checksum, failing decompression), a JSON parse error, a
+ * header/directory mismatch, or a root that is missing, not a directory or
+ * unreadable. A root that exists but has no `sessions` directory is reported as
+ * a note, not a failure.
  *
  * Output lines carry only session id prefixes, byte/frame/event counts, event
  * type tallies and structural damage messages; no message text.
@@ -130,16 +133,43 @@ let logs = 0;
 let frames = 0;
 let events = 0;
 let bad = 0;
+/** A root that cannot be examined must not look like a clean check. */
+const failRoot = (root, reason) => {
+  bad += 1;
+  console.log(`BAD  root ${root}: ${reason}`);
+};
 for (const root of roots) {
+  let rootStat;
+  try {
+    rootStat = statSync(root);
+  } catch (error) {
+    failRoot(root, `not readable (${error.code ?? error.message})`);
+    continue;
+  }
+  if (!rootStat.isDirectory()) {
+    failRoot(root, 'not a directory');
+    continue;
+  }
   const sessionsRoot = join(root, 'sessions');
   let slugs;
   try {
     slugs = readdirSync(sessionsRoot);
-  } catch {
-    continue; // no sessions under this root
+  } catch (error) {
+    // A home that exists without a sessions directory simply has nothing yet;
+    // any other failure (typo, permissions) is an unverified root.
+    if (error.code === 'ENOENT') console.log(`note root ${root}: no sessions directory, nothing to check`);
+    else failRoot(root, `sessions directory not readable (${error.code ?? error.message})`);
+    continue;
   }
   for (const slug of slugs) {
-    for (const dirName of readdirSync(join(sessionsRoot, slug))) {
+    let dirNames;
+    try {
+      dirNames = readdirSync(join(sessionsRoot, slug));
+    } catch (error) {
+      failRoot(root, `session slug ${slug} not readable (${error.code ?? error.message})`);
+      continue;
+    }
+    for (const dirName of dirNames) {
       const sessionDir = join(sessionsRoot, slug, dirName);
       for (const file of readdirSync(sessionDir).filter((name) => name.endsWith('.zstd'))) {
         const path = join(sessionDir, file);
