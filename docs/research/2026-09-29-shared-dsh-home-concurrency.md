@@ -41,11 +41,16 @@ Status: VERIFIED（范围限本文记录的时间、版本、电脑、调用路�
 
 脱敏符号：`<node>` 为 Node 24 可执行文件，`<dsh>` 为 `@deepseek-ai/dsh` 的 `lib/bin.js`，`<testroot>` 为独立测试根目录，`<home>` 为共享测试 `DSH_HOME`。
 
-复现件：[`probes/shared-home-concurrency-probe.mjs`](probes/shared-home-concurrency-probe.mjs)（并发编排与外部锁校验）与 [`probes/session-log-integrity.mjs`](probes/session-log-integrity.mjs)（会话日志完整性）。前者按场景文件里各进程的 `atMs` 偏移启动 `dsh --profile headless` 子进程、按同一时间线执行外部锁校验、把每个进程的 stdout／stderr 落盘，并写出 `report.json`（启动／退出时刻、退出码、PID、被强杀时刻、`--json` 事件里解析出的 sessionId／turn 结束原因／最终文本、锁校验结果）。
+复现件：[`probes/shared-home-concurrency-probe.mjs`](probes/shared-home-concurrency-probe.mjs)（并发编排与外部锁校验）与 [`probes/session-log-integrity.mjs`](probes/session-log-integrity.mjs)（会话日志完整性）。前者按场景文件里各进程的 `atMs` 偏移启动 `dsh --profile headless` 子进程、按同一时间线执行外部锁校验、把每个进程的 stdout／stderr 落盘，并写出 `report.json`（启动／退出时刻、退出码、PID、被强杀时刻、`--json` 事件里解析出的 sessionId／turn 结束原因／最终文本、锁校验结果）；某个进程若根本没起来（工作目录不存在、spawn 失败），同样结算并写入 `spawnError`，报告照常落盘，整次运行以退出 1 表明这是基础设施失败而不是场景结果。
 
 它只给子进程最小环境（`PATH`／`HOME`／`TMPDIR`／`LANG` 等 + 显式 `DSH_HOME` + `DSH_TELEMETRY_DISABLED=1` + 场景自带变量），从不继承探针自身的完整环境——正在工作的 Harness 导出了 `DSH_SESSION_ID`／`DSH_PROFILE` 等变量，不能带进测试进程。
 
 探针版本：本文场景由同一探针运行，提交版本在其上增加了 `killAtMs` 强杀支持，并把"进程启动"与"外部锁校验"放进同一条时间线（早期版本会先把所有进程排完再执行校验）。没有外部锁校验的场景不受该调整影响，提交后已用最终版本重跑一次代表性并发场景（2 个进程仍都退出 0、session 各自独立、stderr 为空）；唯一受影响的强杀场景已用最终版本重跑，本文记录的 4003／6550ms 校验时刻即该次结果。
+
+Review 后另有两处按根因修复，结论与上表数字不变：
+
+- `session-log-integrity.mjs` 改为按 Zstandard 帧结构（RFC 8878 帧头 + 块头）走帧，而不是扫描魔数：Node 的 `zstdDecompressSync` 对截断帧返回部分输出而不报错，且魔数可能出现在压缩负载内部，因此"解码成功"与"魔数命中"都无法可靠区分真实帧边界。现在任何结构性损伤（缺魔数、帧头／块头／校验和越界）、解压失败、JSON 解析错误或头部 `id` 与目录名不一致都以非 0 退出。用四类构造输入核对：中间帧负载损坏（校验和不匹配）、中间截断、末帧截断、块头损坏——修复前全部被判成 OK，修复后全部判 BAD 并退出 1，完好日志仍判 OK；结构走帧与旧魔数扫描在该次比对涉及的 14 个完好日志上给出完全一致的帧数与事件数。
+- `shared-home-concurrency-probe.mjs` 在 spawn 失败路径同样结算 entry、关闭句柄并写出报告：用不存在的工作目录复现时，修复前进程以 unsettled top-level await 退出 13 且没有 `report.json`，修复后 0.07s 内写出带 `spawnError` 的报告并退出 1。
 
 ```bash
 # 1) 测试根目录与共享 home；凭据按受支持方式复制，值不进入命令行与输出
@@ -74,11 +79,11 @@ JSON
 外部锁校验由探针用 `python3` 的 `fcntl.flock(LOCK_EX|LOCK_NB)` 独立完成：它不是 Harness 代码，直接从内核确认 `session.lock` 是否真的被别的进程持有。
 
 ```bash
-# 4) 独立校验：解压每个 session 日志的全部 zstd 帧并逐行解析 JSONL
+# 4) 独立校验：按帧结构走帧、逐帧解压并逐行解析 JSONL
 <node> probes/session-log-integrity.mjs <testroot>/dsh-home <testroot>/dsh-home-cold <testroot>/dsh-home-cold2
 ```
 
-`session-log-integrity.mjs` 不依赖 Harness 代码：`zstdDecompressSync` 只解第一个帧，所以它按 zstd 魔数定位候选帧边界、逐帧解压、把所有行当 JSON 解析，并核对每个日志头部 `id` 与目录名一致；有解析错误或目录名不一致时以非 0 退出。本批运行的输出是 `logs=12 frames=163 events=411 bad=0`。
+`session-log-integrity.mjs` 不依赖 Harness 代码：它按 RFC 8878 的帧头与块头算出每个帧的边界，逐帧解压、把所有行当 JSON 解析，并核对每个日志头部 `id` 与目录名一致；任何结构性损伤、解压失败、解析错误或目录名不一致都以非 0 退出，并打印定位到具体帧的损伤信息。本批运行的输出是 `logs=12 frames=163 events=411 bad=0`（Review 修复后在同一批 home 上复核，此时包含复跑新增的会话，为 `logs=18 frames=222 events=576 bad=0`）。
 
 ## Results
 
@@ -151,9 +156,10 @@ dsh: session "<id>" was recorded in "<workdir-a>", not "<workdir-b>"
 
 静默并发写入的检查：被争用的 session A 日志里 `turn/start` 与 `turn/end` 各 7 次，对应 7 次合法轮次且全部 `completed`；4 次被拒进程（1 次错开 + 3 次同时启动）在内留下 **0 个事件**。
 
-损坏检查（独立工具解压全部 zstd 帧 + 逐行解析 JSONL，覆盖三个 home 的 12 个会话日志）：
+损坏检查（独立工具按帧结构走帧 + 逐帧解压 + 逐行解析 JSONL，覆盖三个 home 的全部会话日志）：
 
-- 12 个日志、163 个 zstd 帧、411 个事件，**0 个不可解码帧、0 个 JSON 解析错误**，每个日志头部 `id` 与目录名一致。
+- 12 个日志、163 个 zstd 帧、411 个事件，**0 个结构性损伤、0 个解压失败、0 个 JSON 解析错误**，每个日志头部 `id` 与目录名一致。
+- 修复探针后复核（此时 home 里已含修复期间复跑新增的会话）：18 个日志、222 个帧、576 个事件，同样 `bad=0`。另外用四类构造输入验证探针本身：中间帧负载损坏、中间截断、末帧截断、块头损坏全部判 BAD 并退出 1（修复前这些输入会被判成 OK）。
 
 崩溃恢复（`SIGKILL` 强杀持有写锁的进程）：
 

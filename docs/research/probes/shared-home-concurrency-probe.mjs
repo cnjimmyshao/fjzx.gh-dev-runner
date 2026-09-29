@@ -34,6 +34,11 @@
  * Outputs into `outDir`: `<label>.stdout`, `<label>.stderr`, `report.json`.
  * The report holds only timeline facts, exit status, parsed `--json` run
  * events (session id, turn end reason, final text) and lease-check results.
+ *
+ * Exit status: 0 when every scheduled process was spawned (whatever it then
+ * did, including being killed); 1 when any process failed to spawn, which is an
+ * infrastructure failure rather than a scenario outcome. The report is written
+ * in both cases.
  */
 
 import { spawn } from 'node:child_process';
@@ -97,9 +102,6 @@ function startProcess(spec) {
   });
   entry.spawnAtMs = now() - t0;
   entry.pid = child.pid;
-  child.on('error', (error) => {
-    entry.spawnError = { code: error.code, message: error.message };
-  });
   if (spec.killAtMs !== undefined) {
     // Simulate a hard crash while the process holds whatever it holds.
     setTimeout(() => {
@@ -110,13 +112,25 @@ function startProcess(spec) {
     }, Math.max(0, spec.killAtMs - (now() - t0)));
   }
   entry.exited = new Promise((done) => {
-    child.on('exit', (code, signal) => {
+    // A spawn failure (bad cwd, missing binary, resource limits) emits 'error'
+    // and may never emit 'exit': settle on either, exactly once, so the report
+    // is still written instead of the promise hanging.
+    let settled = false;
+    const settle = (code, signal) => {
+      if (settled) return;
+      settled = true;
       entry.exitAtMs = now() - t0;
       entry.exitCode = code;
       entry.signal = signal;
       closeSync(outFd);
       closeSync(errFd);
       done();
+    };
+    child.on('exit', (code, signal) => settle(code, signal));
+    child.on('error', (error) => {
+      entry.spawnError = { code: error.code, message: error.message };
+      entry.errorAtMs = now() - t0;
+      settle(undefined, undefined);
     });
   });
 }
@@ -222,3 +236,10 @@ for (const entry of processes) {
 for (const check of leaseChecks) {
   console.log(`${check.label}: lease acquired=${check.acquired} at=${check.ranAtMs}ms`);
 }
+// A process that never started is an infrastructure failure, not a scenario
+// outcome: keep the report, but exit non-zero so the caller notices.
+const spawnFailures = processes.filter((entry) => entry.spawnError !== undefined);
+for (const entry of spawnFailures) {
+  console.log(`${entry.label}: SPAWN ERROR ${entry.spawnError.code}: ${entry.spawnError.message}`);
+}
+process.exitCode = spawnFailures.length === 0 ? 0 : 1;
