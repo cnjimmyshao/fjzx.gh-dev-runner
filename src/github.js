@@ -133,7 +133,13 @@ export function createGithubClient(options = {}) {
       items.push(...batch);
       if (batch.length < pageSize) return { items, truncated: false };
     }
-    return { items, truncated: true };
+    // 最后一页恰好填满并不等于一定还有数据；额外探测一页，避免“恰好上限”永久卡住 baseline。
+    const probeQuery = new URLSearchParams({ ...params, per_page: '1', page: String(maxPages + 1) });
+    const probe = await apiGet(`${pathname}?${probeQuery.toString()}`);
+    if (!Array.isArray(probe)) {
+      throw new GithubError('gh api 分页探测预期返回数组，实际不是', { kind: 'invalid_response' });
+    }
+    return { items, truncated: probe.length > 0 };
   }
 
   return {
