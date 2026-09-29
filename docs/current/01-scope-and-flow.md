@@ -16,7 +16,7 @@
 
 本地按配置周期检查已接入仓库的新增内容，不用 Actions 定时扫描，也不为每次空检查调用模型。读取增量而非反复重读全部 Issue；初次启动不把历史命令全部重放。
 
-每台 Runner 在本机配置自己的 `runnerName`。V1 一个 Issue 的当前 task binding 只归一个 Runner，不让多台机器同时处理同一 Issue；换 Runner 必须由维护者明确迁移绑定。新建 Issue 时只检查一次授权主体的初始 Issue Body；进入评论阶段后，只在该 Issue **没有正在运行的 Harness** 时读取当前最新一条尚未被扫描水位越过的评论。该评论无论是否授权、是否为 Runner 自动反馈、是否为命令都会推进扫描水位；随后才判断它是否属于授权主体、是否应排除 `BOT:<runnerName>` 自动反馈，以及正文 trim 后是否以 `@<runnerName>` 结尾。只有这些命令条件都成立，才表示请求该机器现在开始或继续工作。运行中的 Issue 直接跳过，不读取它的新评论、不推进它的触发水位；当前 Harness 结束后，下一次轮询才重新读取当时的最新评论。完整规则见 [Runner 激活与任务触发 Contract](03-runner-trigger.md)。
+每台 Runner 在本机配置自己的 `runnerName`。V1 一个 Issue 的当前 task binding 只归一个 Runner，不让多台机器同时处理同一 Issue；换 Runner 必须由维护者明确迁移绑定。新建 Issue 时只检查一次授权主体的初始 Issue Body；进入评论阶段后，只在该 Issue **没有正在运行的 Harness** 时扫描水位之后的新评论，把水位推进到本轮扫描终点，并只选择其中最新一条由授权主体发布、非 `BOT:<runnerName>` 且正文 trim 后以 `@<runnerName>` 结尾的有效控制评论。普通讨论、未授权评论和 Runner 自动反馈只推进扫描进度，不覆盖合法控制评论；多条有效控制评论只执行最新一条。运行中的 Issue 直接跳过，不读取它的新评论、不推进它的触发水位；当前 Harness 结束后，下一次轮询才扫描水位之后的新评论，并只取其中最新一条有效控制评论。完整规则见 [Runner 激活与任务触发 Contract](03-runner-trigger.md)。
 
 示意链路（尚未实现）：
 
@@ -59,11 +59,11 @@ GitHub 通信复用实际运行账户已授权的 `gh`；安装 CLI 不等于该
 
 本机配置和凭证不入库，授权至少绑定仓库、发起人和目标 Runner。GitHub 内容是外部输入，不得拼成 shell 命令；启动受信任的 CLI 并将任务作为数据传递。其他权限和沙箱使用已有工具能力，不为内部约定重复制造防御框架。
 
-Runner 的 GitHub 回写只覆盖自己的控制责任：合法的授权初始 Body，或当前最新评论在扫描后通过授权／`BOT:` 排除与命令语法判断并成功触发启动或续接 Harness，并进入对应 session 后，以 `BOT:<runnerName>` 开头回复一次“Runner 名 + Session ID”；如果 Harness 根本无法正常启动或续接，导致 Dev 没有进入可工作的 session，则同样以 `BOT:<runnerName>` 开头留一条简短失败回复。普通讨论、Dev 回报以及不以本机 `@<runnerName>` 结尾的回复不是执行请求，不因“有新评论”本身触发 Runner。
+Runner 的 GitHub 回写只覆盖自己的控制责任：合法的授权初始 Body，或扫描水位之后最新一条有效的 `@<runnerName>` 控制评论成功触发启动或续接 Harness，并进入对应 session 后，以 `BOT:<runnerName>` 开头回复一次“Runner 名 + Session ID”；如果 Harness 根本无法正常启动或续接，导致 Dev 没有进入可工作的 session，则同样以 `BOT:<runnerName>` 开头留一条简短失败回复。普通讨论、Dev 回报以及不以本机 `@<runnerName>` 结尾的回复不是执行请求，不因“有新评论”本身触发 Runner。
 
 Harness 正常退出后，Runner **不**自动写 `completed`、执行结束、开发完成或模型回答摘要，也不把 stdout、exit code、`status.kind` 转述成业务结果。Runner 在本机保存完整运行追踪，包括触发来源、START/RESUME、session、启动/结束时间、运行时长、进程/退出状态、异常摘要及必要恢复信息；这些技术状态用于去重、释放执行状态、正确续接和故障诊断，不等于需要公开到 GitHub。业务完成、测试结果、PR、Review 修复与待维护者决定的问题，由 Dev 在 Harness 会话中按目标项目规则直接处理。
 
-Dev 若因必须等待 Maintainer 决定而无法继续，应在原关联 Issue 交接待决问题后结束本轮 Harness，而不是保持 Harness 长期运行并自行轮询 Issue。该退出只释放本轮运行态，不删除 task binding、workspace、branch、已有 PR 或 session。Maintainer 后续回复本身不自动恢复工作；需要继续时，应发布一条新的控制评论，并确保它在 Runner 扫描时仍是当前最新评论；Runner 推进扫描水位后确认其授权、非 `BOT:` 且以 `@<runnerName>` 结尾，才形成新的执行请求并 RESUME 原 session。
+Dev 若因必须等待 Maintainer 决定而无法继续，应在原关联 Issue 交接待决问题后结束本轮 Harness，而不是保持 Harness 长期运行并自行轮询 Issue。该退出只释放本轮运行态，不删除 task binding、workspace、branch、已有 PR 或 session。Maintainer 后续回复本身不自动恢复工作；需要继续时，应发布一条新的控制评论并以 `@<runnerName>` 结尾；Runner 下一次扫描只在水位之后的新评论中取最新一条有效控制评论并 RESUME 原 session。后续普通／未授权／`BOT:` 评论不覆盖它；若又有更新的有效控制评论，则只执行更新的那一条。
 
 问题归档到任务所属 Issue，不能把私有任务内容转贴到本公开工具仓库。保留必要本机日志，不默认把完整模型输出公开。GitHub 上的“已开始工作”只表示 Runner 已成功启动正确的 Harness 调用，不表示 Dev 已完成任务。
 
