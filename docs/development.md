@@ -1,3 +1,5 @@
+<!-- review-refresh: no behavior change; refresh PR head for automated review indexing -->
+
 # 开发环境与验证
 
 ## 当前就绪情况
