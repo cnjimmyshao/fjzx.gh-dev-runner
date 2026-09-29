@@ -6,7 +6,7 @@
 
 | 数据 | 当前位置／入口 | 责任 |
 | --- | --- | --- |
-| Runner 配置 | 本机 Runner 配置文件（具体路径由实现确定） | 本机身份、允许仓库／发起人、工作目录、GitHub/Harness 调用参数 |
+| Runner 配置 | 本机 Runner V1 Runner 的人工部署配置规范入口固定为仓库 checkout 外／本机部署目录中的 `.env`；仓库提供 `.env.example` 作为无凭据模板。Runner 自动维护的运行状态不写回 `.env`，而写入 `runtime.stateDir/state.json`。
 | Runner 状态 | `<stateDir>/state.json` | 内容处理进度、任务绑定、sessionId、活跃 Harness 运行态与恢复所需技术状态 |
 | Harness 会话 | Harness 自己的 `DSH_HOME` | 真正的模型对话、上下文与 Harness 持久化数据 |
 | 凭据 | `gh` 登录与 Harness 支持的凭据存储 | GitHub 授权和模型 Key；不进入普通配置／状态 JSON |
