@@ -128,9 +128,10 @@ function startProcess(spec) {
   });
   entry.spawnAtMs = now() - t0;
   entry.pid = child.pid;
+  let killTimer;
   if (spec.killAtMs !== undefined) {
     // Simulate a hard crash while the process holds whatever it holds.
-    setTimeout(() => {
+    killTimer = setTimeout(() => {
       if (entry.exitAtMs === undefined) {
         entry.killedAtMs = now() - t0;
         child.kill('SIGKILL');
@@ -140,11 +141,14 @@ function startProcess(spec) {
   entry.exited = new Promise((done) => {
     // A spawn failure (bad cwd, missing binary, resource limits) emits 'error'
     // and may never emit 'exit': settle on either, exactly once, so the report
-    // is still written instead of the promise hanging.
+    // is still written instead of the promise hanging. The kill timer dies with
+    // the entry, or a late killAtMs would keep the process alive long after the
+    // report was written.
     let settled = false;
     const settle = (code, signal) => {
       if (settled) return;
       settled = true;
+      if (killTimer !== undefined) clearTimeout(killTimer);
       entry.exitAtMs = now() - t0;
       entry.exitCode = code;
       entry.signal = signal;

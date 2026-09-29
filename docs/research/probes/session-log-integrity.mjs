@@ -171,7 +171,16 @@ for (const root of roots) {
     }
     for (const dirName of dirNames) {
       const sessionDir = join(sessionsRoot, slug, dirName);
-      for (const file of readdirSync(sessionDir).filter((name) => name.endsWith('.zstd'))) {
+      const logFiles = readdirSync(sessionDir).filter((name) => name.endsWith('.zstd'));
+      if (logFiles.length === 0) {
+        // A session directory without any committed generation log means the
+        // log is gone (or was never written); silently skipping it would report
+        // a clean check over missing data.
+        bad += 1;
+        console.log(`BAD  ${dirName.slice(0, 20)} dir=${sessionDir}: no session log (.zstd) in the session directory`);
+        continue;
+      }
+      for (const file of logFiles) {
         const path = join(sessionDir, file);
         const result = inspectLog(path, dirName);
         logs += 1;
