@@ -168,16 +168,23 @@ function startProcess(spec) {
 /**
  * Try a non-blocking exclusive `flock` on a lock path from a separate process.
  * The Harness lease is a kernel lock, so this is independent evidence that the
- * lock is actually held, not just that a lock file exists.
+ * lock is actually held, not just that a lock file exists. Only a contention
+ * errno counts as "held by someone else"; any other failure (no lock support on
+ * the filesystem, resource exhaustion) exits non-zero so the run reports an
+ * infrastructure failure instead of claiming the lock is held.
  */
 async function runLeaseCheck(spec) {
   const script = [
-    'import fcntl, json, sys',
+    'import errno, fcntl, json, sys',
     'handle = open(sys.argv[1], "w")',
     'try:',
     '    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)',
     '    print(json.dumps({"acquired": True}))',
     'except OSError as error:',
+    '    contention = {errno.EAGAIN, errno.EWOULDBLOCK, errno.EACCES}',
+    '    if error.errno not in contention:',
+    '        print(json.dumps({"error": "flock failed", "errno": error.errno, "name": errno.errorcode.get(error.errno)}), file=sys.stderr)',
+    '        sys.exit(3)',
     '    print(json.dumps({"acquired": False, "errno": error.errno}))',
   ].join('\n');
   const result = { label: spec.label, scheduledAtMs: spec.atMs, lockPath: resolve(spec.lockPath) };
