@@ -162,7 +162,6 @@ export function createRunner(deps) {
    */
   async function finalizeOrphan(run, verdict) {
     const capture = harness.readCapture(run.runDir);
-    harness.finalizeCapture?.(run.runDir);
     const requestedSession = run.sessionId ?? null;
     const capturedSession = capture.sessionId ?? null;
     // 与正常结算同一判据：续接返回的会话标识与绑定不一致时不采信，也不据此发布接单确认。
@@ -226,6 +225,8 @@ export function createRunner(deps) {
       sessionUnknown,
       pid: run.pid,
     });
+    // 先持久化恢复结论，再收敛原始捕获；崩溃时不会丢掉用于判定的唯一证据。
+    harness.finalizeCapture?.(run.runDir);
 
     if (enteredWorkableSession) {
       await ensureSuccessFeedback(run, sessionId);
@@ -359,8 +360,15 @@ export function createRunner(deps) {
       throw new Error('Issue 分页未完成，本轮不推进扫描窗口');
     }
 
+    const observedTimes = listed.items
+      .map((issue) => Date.parse(issue.updated_at ?? ''))
+      .filter(Number.isFinite);
+    const serverObservedAt = observedTimes.length === 0
+      ? lastScanAt
+      : new Date(Math.max(...observedTimes)).toISOString();
+
     for (const issue of listed.items) {
-      const result = await considerIssue(repository, issue, since ?? scanStartedAt);
+      const result = await considerIssue(repository, issue, since ?? serverObservedAt ?? lastScanAt);
       if (result.claimed) {
         await store.update((draft) => {
           draft.scheduler.repoCursor = (index + 1) % config.repositories.length;
@@ -371,7 +379,7 @@ export function createRunner(deps) {
 
     await store.update((draft) => {
       const record = repositoryState(draft, repo);
-      if (record.baselineCompleted) record.lastScanAt = scanStartedAt;
+      if (record.baselineCompleted && serverObservedAt !== null) record.lastScanAt = serverObservedAt;
     });
     return { claimed: null };
   }
@@ -797,7 +805,6 @@ export function createRunner(deps) {
   /** 结算一次调用：写本机技术结果，必要时补发最小 GitHub 反馈。 */
   async function finishRun(run, result) {
     const verdict = classifyHarnessResult(result);
-    harness.finalizeCapture?.(result.runDir);
     // 会话不匹配时绝不采信返回的另一个 session 标识，也不改写绑定。
     const sessionId = result.sessionMismatch ? run.sessionId ?? null : result.sessionId ?? run.sessionId ?? null;
     // 进程确实启动过、却始终没有 session 事件：无法排除“会话已建立但标识没拿到”，按绑定不明确处理。
