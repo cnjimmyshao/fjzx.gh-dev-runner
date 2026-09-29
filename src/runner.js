@@ -432,6 +432,7 @@ export function createRunner(deps) {
       sourceType: 'issue_body',
       sourceId: `issue-${issue.number}-body`,
       author: decision.author,
+      initialCommentWindowAt: windowStart,
     });
   }
 
