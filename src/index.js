@@ -28,6 +28,9 @@ import { createRunner } from './runner.js';
 import { StateStore, issueState } from './state.js';
 import { branchFor, createWorkdirManager, taskDirFor } from './workdir.js';
 
+/** 收到退出信号后等待正在收尾的运行的宽限期。 */
+const SHUTDOWN_GRACE_MS = 5_000;
+
 const USAGE = `用法:
   node src/index.js [--env <path>] [--once] [--wait]
   node src/index.js resolve-run --run <runId> --outcome exited|running [--session <id>]
@@ -121,6 +124,8 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
   const lock = acquireInstanceLock(config.runtime.stateDir, deps);
   // 只要本进程还可能写状态，锁就必须留着：子进程仍在运行时提前释放会让第二个 Runner 同时写 state.json。
   process.once('exit', () => lock.release());
+  // 每次写盘前复核锁归属：锁被并发接管后立即停止覆盖状态，而不是继续当第二个写入者。
+  store.setOwnershipCheck(() => lock.assertHeld());
   const github = deps.github ?? createGithubClient({
     timeoutMs: config.github.timeoutMs,
     pageSize: config.github.pageSize,
@@ -163,12 +168,29 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     do {
       const summary = await runCycleSafely(runner, logger, audit);
       if (summary.errors.length > 0) exitCode = 1;
+      if (summary.fatal) {
+        exitCode = 2;
+        stop();
+        break;
+      }
       if (options.once) break;
       if (!stopping) await delay(config.runtime.pollSeconds * 1_000);
     } while (!stopping);
 
-    if (options.wait) {
-      while (runner.localRunCount() > 0) await delay(200);
+    // `--once` 默认等本轮领取的 Harness 结束；收到退出信号时只等一段有限宽限期。
+    if (options.once || options.wait || stopping) {
+      const deadline = stopping ? Date.now() + SHUTDOWN_GRACE_MS : Number.POSITIVE_INFINITY;
+      while (runner.localRunCount() > 0 && Date.now() < deadline) await delay(100);
+    }
+    if (runner.localRunCount() > 0) {
+      logger.warn('仍有 Harness 在运行：本进程退出，这些运行由下次启动按恢复语义接管');
+      audit.append({
+        event: 'runner_exit_with_active_runs',
+        runnerName: config.runnerName,
+        pid: process.pid,
+        activeRuns: runner.localRunCount(),
+      });
+      process.exit(exitCode);
     }
     return exitCode;
   } finally {
@@ -185,9 +207,19 @@ async function runCycleSafely(runner, logger, audit) {
   try {
     return await runner.runCycle();
   } catch (error) {
+    const fatal = error instanceof InstanceLockError;
     logger.error(`本轮轮询失败: ${truncateDiagnostic(error.message)}`);
-    audit.append({ event: 'cycle_failed', diagnostic: truncateDiagnostic(error.message) });
-    return { claimed: null, scanned: [], errors: [{ repo: null, message: truncateDiagnostic(error.message) }] };
+    audit.append({
+      event: 'cycle_failed',
+      diagnostic: truncateDiagnostic(error.message),
+      ...(fatal ? { fatal: 'instance_lock_lost' } : {}),
+    });
+    return {
+      claimed: null,
+      scanned: [],
+      errors: [{ repo: null, message: truncateDiagnostic(error.message) }],
+      fatal,
+    };
   }
 }
 
@@ -200,19 +232,45 @@ async function runResolveCommand(options, config, stdout, deps) {
   const store = new StateStore(config.runtime.stateDir);
   store.load();
   const lock = acquireInstanceLock(config.runtime.stateDir, deps);
-  // 只要本进程还可能写状态，锁就必须留着：子进程仍在运行时提前释放会让第二个 Runner 同时写 state.json。
-  process.once('exit', () => lock.release());
+  const audit = createAuditLog(config.runtime.stateDir);
   try {
+    let code;
     if (options.command === 'resolve-run') {
-      return resolveRun(options, store, stdout);
+      code = await resolveRun(options, store, stdout);
+    } else if (options.command === 'resolve-binding') {
+      code = await resolveBinding(options, config, store, stdout);
+    } else {
+      code = await resolveSession(options, store, stdout);
     }
-    if (options.command === 'resolve-binding') {
-      return resolveBinding(options, config, store, stdout);
-    }
-    return resolveSession(options, store, stdout);
+    // 人工恢复动作改写了持久化控制状态，必须留下 append-only 审计，事后能回答“谁何时释放 / 确认 / 迁移了什么”。
+    audit.append({
+      event: 'manual_resolution',
+      command: options.command,
+      runnerName: config.runnerName,
+      pid: process.pid,
+      ...describeResolution(options),
+    });
+    return code;
   } finally {
     lock.release();
   }
+}
+
+/**
+ * 只记录恢复命令的结构化参数，不复制评论正文或会话标识值。
+ * @param {{flags: Record<string, unknown>}} options
+ */
+function describeResolution(options) {
+  const { run, repo, issue, outcome, session, takeOwnership, noSession } = options.flags;
+  return {
+    runId: run ?? null,
+    repository: repo ?? null,
+    issueNumber: issue === undefined ? null : Number(issue),
+    outcome: outcome ?? null,
+    sessionRecorded: typeof session === 'string' ? session : null,
+    noSession: noSession === true,
+    takeOwnership: takeOwnership === true,
+  };
 }
 
 async function resolveRun(options, store, stdout) {

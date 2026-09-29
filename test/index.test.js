@@ -92,6 +92,12 @@ test('resolve-session 记录人工核对的 sessionId 或确认无遗留会话',
     reloaded.load();
     assert.equal(reloaded.read().repositories['owner/repo'].issues['7'].binding.sessionId, 'session-manual');
     assert.equal(reloaded.read().repositories['owner/repo'].issues['7'].binding.sessionUnresolved, false);
+    const auditText = fs.readFileSync(path.join(stateDir, 'audit', 'audit.jsonl'), 'utf8');
+    assert.match(auditText, /"event":"manual_resolution"/);
+    assert.match(auditText, /"command":"resolve-session"/);
+    // sessionId 由 Contract 要求在接单确认里公开，本机审计记录它用于“谁确认了哪个会话”的回查。
+    assert.match(auditText, /"sessionRecorded":"session-manual"/);
+    assert.doesNotMatch(auditText, /已接单|BOT:/, '审计不复制 GitHub 反馈正文');
 
     await main(['--env', envFile, 'resolve-session', '--repo', 'owner/repo', '--issue', '7', '--no-session'], {
       stdout: silentStdout(),
@@ -245,7 +251,9 @@ test('未登录 gh 时拒绝启动', { skip: process.versions.node.split('.')[0]
   }
 });
 
-test('本进程仍有运行在飞时不释放实例锁', { skip: process.versions.node.split('.')[0] !== '24' && 'Runner 只支持 Node 24（engines.node = 24.x）' }, async () => {
+test('本进程仍有运行在飞时不释放实例锁', {
+  skip: process.versions.node.split('.')[0] !== '24' && 'Runner 只支持 Node 24（engines.node = 24.x）',
+}, async () => {
   const root = tempDir('fjzx-index-');
   try {
     const { envFile, stateDir, sourceDir } = writeEnv(root);
@@ -288,14 +296,13 @@ test('本进程仍有运行在飞时不释放实例锁', { skip: process.version
       }),
     });
 
-    const code = await main(['--env', envFile, '--once'], {
+    const pending = main(['--env', envFile, '--once'], {
       stdout: silentStdout(),
       github,
       harness: slowHarness,
       workdir: createFakeWorkdir(),
     });
-    assert.equal(code, 0);
-    assert.equal(launches.length, 1);
+    while (launches.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
     assert.equal(
       fs.existsSync(path.join(stateDir, 'runner.lock')),
       true,
@@ -303,8 +310,13 @@ test('本进程仍有运行在飞时不释放实例锁', { skip: process.version
     );
 
     release();
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    assert.equal(fs.existsSync(path.join(stateDir, 'runner.lock')), true);
+    const code = await pending;
+    assert.equal(code, 0);
+    assert.equal(
+      fs.existsSync(path.join(stateDir, 'runner.lock')),
+      false,
+      '没有在飞运行后释放锁，允许正常重启',
+    );
     assert.ok(sourceDir);
   } finally {
     cleanup(root);

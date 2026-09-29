@@ -35,6 +35,20 @@ test('陈旧锁（进程已不存在）可以被接管', () => {
   }
 });
 
+test('锁被替换后 assertHeld 明确失败，且不删除别人的锁', () => {
+  const dir = tempDir();
+  try {
+    const lock = acquireInstanceLock(dir, { pid: 111, isAlive: () => true });
+    lock.assertHeld();
+    fs.writeFileSync(lock.path, `${JSON.stringify({ pid: 999, startedAt: 'later', nonce: 'other' })}\n`);
+    assert.throws(() => lock.assertHeld(), InstanceLockError);
+    lock.release();
+    assert.equal(fs.existsSync(lock.path), true, '不属于自己的锁不得删除');
+  } finally {
+    cleanup(dir);
+  }
+});
+
 test('锁内容不可读时拒绝抢占', () => {
   const dir = tempDir();
   try {

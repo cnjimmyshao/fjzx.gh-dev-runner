@@ -181,6 +181,12 @@ export function createFakeAudit() {
     append(record) {
       records.push(record);
     },
+    /** 与真实 audit 相同的回查语义：按字段匹配已写入的记录。 */
+    has(match) {
+      return records.some((record) =>
+        Object.entries(match).every(([key, value]) => record[key] === value),
+      );
+    },
     events() {
       return records.map((entry) => entry.event);
     },

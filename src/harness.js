@@ -414,6 +414,12 @@ export function createHarnessRunner(options) {
      */
     finalizeCapture(runDir) {
       if (config.runtime.capture === 'full') return;
+      // metadata 只保留技术事件：stderr 可能有诊断、模型或工具输出与本机路径，默认不长期留。
+      try {
+        fs.rmSync(path.join(runDir, 'stderr.log'), { force: true });
+      } catch (error) {
+        logger.warn(`清理 stderr 捕获失败: ${error.code ?? error.message}`);
+      }
       const file = path.join(runDir, 'stdout.jsonl');
       if (!fs.existsSync(file)) return;
       const kept = [];

@@ -132,6 +132,32 @@ test('临界区内的 mutator 不得 await', async () => {
   }
 });
 
+test('实例锁被接管后拒绝继续写状态', async () => {
+  const dir = tempDir();
+  try {
+    const store = new StateStore(dir);
+    store.load();
+    let held = true;
+    store.setOwnershipCheck(() => {
+      if (!held) throw new Error('实例锁已被其他进程接管，本进程停止写入状态');
+    });
+    await store.update((draft) => {
+      issueState(draft, 'owner/repo', 1).issueBodyHandled = true;
+    });
+
+    held = false;
+    await assert.rejects(
+      store.update((draft) => {
+        issueState(draft, 'owner/repo', 2).issueBodyHandled = true;
+      }),
+      /已被其他进程接管/,
+    );
+    assert.equal(store.read().repositories['owner/repo'].issues['2'], undefined);
+  } finally {
+    cleanup(dir);
+  }
+});
+
 test('容量记账只统计 starting / running / unknown', () => {
   const state = createEmptyState();
   state.activeRuns = {

@@ -167,6 +167,11 @@ test('START 成功：早期取得 sessionId、早期判据成立、任务通过 
     assert.match(capture, /"type":"session"/);
     assert.match(capture, /"phase":"turn_end"/);
     assert.doesNotMatch(capture, /ANSWER-TEXT|THINKING-TEXT/);
+    assert.equal(
+      fs.existsSync(path.join(config.runtime.stateDir, 'runs', 'run-1', 'stderr.log')),
+      false,
+      'metadata 模式不长期保留 stderr 捕获',
+    );
   } finally {
     cleanup(dir);
   }

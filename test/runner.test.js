@@ -714,11 +714,8 @@ test('重启恢复：进程已消失的孤儿运行释放槽位并按证据补�
     assert.equal(postedBodies(ctx.github).length, 1);
     assert.match(postedBodies(ctx.github)[0], /Session ID: session-7/);
 
-    // 第二次重启：反馈标记丢失，但 GitHub 上已有对应反馈；回查后不重复发。
+    // 第二次重启：反馈标记丢失，但本机审计里已有对应记录；回查后不重复发。
     ctx.github.calls.length = 0;
-    ctx.github.listRecentComments = async () => [
-      makeComment({ id: 900, body: 'BOT:MB01\nMB01 已接单，Session ID: session-7', user: { login: 'MB01' } }),
-    ];
     await ctx.store.update((draft) => {
       draft.activeRuns['run-orphan'].status = 'running';
       draft.activeRuns['run-orphan'].feedback = { success: false, failure: false };
@@ -1329,6 +1326,170 @@ test('绑定属于另一台 Runner 时拒绝静默接管', async () => {
     const bodies = postedBodies(ctx.github);
     assert.equal(bodies.length, 1);
     assert.match(bodies[0], /另一台 Runner/);
+  } finally {
+    cleanup(ctx.stateDir);
+  }
+});
+
+test('孤儿恢复：续接返回不同会话标识时判为绑定不一致，不发接单确认', async () => {
+  const stateDir = tempDir('fjzx-state-');
+  const ctx = await setup({
+    stateDir,
+    plan: {
+      probe: 'gone',
+      capture: {
+        exists: true,
+        sessionId: 'session-other',
+        turnEndReason: 'completed',
+        hadFinal: true,
+        hadAssistantCommit: true,
+        errorMessage: null,
+      },
+    },
+  });
+  try {
+    await seedRepository(ctx.store);
+    await seedIssue(ctx.store, 7, {
+      issueBodyHandled: true,
+      binding: {
+        runnerName: 'MB01',
+        dir: '/tmp/task',
+        sessionId: 'session-wanted',
+        branch: 'fjzx/issue-7',
+        source: ctx.config.repositories[0].sourceDir,
+        worktreeCreated: true,
+        createdAt: '2026-09-30T00:00:00.000Z',
+      },
+    });
+    await ctx.store.update((draft) => {
+      draft.activeRuns['run-mismatch'] = {
+        runId: 'run-mismatch',
+        repository: 'owner/repo',
+        issueNumber: 7,
+        status: 'running',
+        kind: 'resume',
+        pid: 557,
+        pidSignature: 'sig',
+        runDir: `${stateDir}/runs/run-mismatch`,
+        sessionId: 'session-wanted',
+        startedAt: '2026-09-30T00:00:00.000Z',
+        trigger: { sourceType: 'comment', sourceId: '200', at: '2026-09-30T00:00:00.000Z' },
+        feedback: { success: false, failure: false },
+      };
+    });
+
+    await ctx.runner.recoverActiveRuns();
+    const run = ctx.store.read().activeRuns['run-mismatch'];
+    assert.equal(run.outcome, 'session_mismatch');
+    assert.equal(run.sessionId, 'session-wanted');
+    assert.equal(issueRecord(ctx.store, 7).binding.sessionId, 'session-wanted');
+    const bodies = postedBodies(ctx.github);
+    assert.equal(bodies.length, 1);
+    assert.doesNotMatch(bodies[0], /已接单|session-other/);
+  } finally {
+    cleanup(stateDir);
+  }
+});
+
+test('孤儿恢复：START 无会话证据时标记绑定不明确', async () => {
+  const stateDir = tempDir('fjzx-state-');
+  const ctx = await setup({
+    stateDir,
+    plan: {
+      probe: 'gone',
+      capture: { exists: true, sessionId: null, turnEndReason: null, hadFinal: false, hadAssistantCommit: false, errorMessage: null },
+    },
+  });
+  try {
+    await seedRepository(ctx.store);
+    await seedIssue(ctx.store, 7, {
+      issueBodyHandled: true,
+      binding: {
+        runnerName: 'MB01',
+        dir: '/tmp/task',
+        sessionId: null,
+        branch: 'fjzx/issue-7',
+        source: ctx.config.repositories[0].sourceDir,
+        worktreeCreated: true,
+        createdAt: '2026-09-30T00:00:00.000Z',
+      },
+    });
+    await ctx.store.update((draft) => {
+      draft.activeRuns['run-nosession'] = {
+        runId: 'run-nosession',
+        repository: 'owner/repo',
+        issueNumber: 7,
+        status: 'starting',
+        kind: 'start',
+        pid: 558,
+        pidSignature: 'sig',
+        runDir: `${stateDir}/runs/run-nosession`,
+        sessionId: null,
+        startedAt: '2026-09-30T00:00:00.000Z',
+        trigger: { sourceType: 'issue_body', sourceId: 'issue-7-body', at: '2026-09-30T00:00:00.000Z' },
+        feedback: { success: false, failure: false },
+      };
+    });
+
+    await ctx.runner.recoverActiveRuns();
+    assert.equal(issueRecord(ctx.store, 7).binding.sessionUnresolved, true);
+    assert.equal(postedBodies(ctx.github).length, 1);
+    assert.match(postedBodies(ctx.github)[0], /失败/);
+  } finally {
+    cleanup(stateDir);
+  }
+});
+
+test('launch 同步抛错时按启动失败结算，不留下永久 starting', async () => {
+  const ctx = await setup({
+    script: {
+      listIssuesSince: () => ({ items: [makeIssue({ number: 7, body: '@MB01' })], truncated: false }),
+    },
+  });
+  try {
+    ctx.harness.launch = () => {
+      throw new Error('EACCES: 无法创建 run 目录');
+    };
+    await seedRepository(ctx.store);
+    await ctx.runner.runCycle();
+    await waitForIdle(ctx.runner);
+
+    const run = Object.values(ctx.store.read().activeRuns).at(-1);
+    assert.equal(run.status, 'exited');
+    assert.equal(run.outcome, 'spawn_failed');
+    const bodies = postedBodies(ctx.github);
+    assert.equal(bodies.length, 1);
+    assert.match(bodies[0], /Harness 进程未能启动/);
+  } finally {
+    cleanup(ctx.stateDir);
+  }
+});
+
+test('审计里已有反馈记录时不再重复发布（不依赖跨主机时间戳）', async () => {
+  const ctx = await setup();
+  try {
+    await seedRepository(ctx.store);
+    await seedIssue(ctx.store, 7, { issueBodyHandled: true });
+    ctx.audit.append({ event: 'feedback_sent', runId: 'run-done', kind: 'success' });
+    await ctx.store.update((draft) => {
+      draft.activeRuns['run-done'] = {
+        runId: 'run-done',
+        repository: 'owner/repo',
+        issueNumber: 7,
+        status: 'exited',
+        outcome: 'turn_completed',
+        sessionId: 'session-done',
+        startedAt: '2026-09-30T00:00:00.000Z',
+        endedAt: '2026-09-30T00:00:10.000Z',
+        trigger: { sourceType: 'comment', sourceId: '150', at: '2026-09-30T00:00:00.000Z' },
+        feedback: { success: false, failure: false },
+        feedbackExpectation: 'success',
+      };
+    });
+
+    await ctx.runner.runCycle();
+    assert.equal(ctx.github.countOf('postComment'), 0);
+    assert.equal(ctx.store.read().activeRuns['run-done'].feedback.success, true);
   } finally {
     cleanup(ctx.stateDir);
   }

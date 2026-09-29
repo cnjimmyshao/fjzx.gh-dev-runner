@@ -137,9 +137,13 @@ export function createGithubClient(options = {}) {
   }
 
   return {
-    /** 启动前检查执行账户的本机认证状态（不读取、不转发 token）。 */
-    async authStatus() {
-      const { stdout } = await run(['auth', 'status']);
+    /**
+     * 启动前检查执行账户的本机认证状态（不读取、不转发 token）。
+     * 只校验目标 host 的 active account：其他 host 或非活动账户的过期登录不应阻止 Runner 启动。
+     * @param {string} [host]
+     */
+    async authStatus(host = options.host ?? 'github.com') {
+      const { stdout } = await run(['auth', 'status', '--hostname', host, '--active']);
       return stdout;
     },
 

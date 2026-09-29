@@ -163,16 +163,28 @@ export function createRunner(deps) {
   async function finalizeOrphan(run, verdict) {
     const capture = harness.readCapture(run.runDir);
     harness.finalizeCapture?.(run.runDir);
-    const sessionId = run.sessionId ?? capture.sessionId ?? null;
-    // 与正常结算使用同一判据：只有 sessionId 而没有已提交助手内容，不算“进入可工作 session”。
-    const enteredWorkableSession = sessionId !== null
+    const requestedSession = run.sessionId ?? null;
+    const capturedSession = capture.sessionId ?? null;
+    // 与正常结算同一判据：续接返回的会话标识与绑定不一致时不采信，也不据此发布接单确认。
+    const sessionMismatch = run.kind === 'resume'
+      && requestedSession !== null
+      && capturedSession !== null
+      && capturedSession !== requestedSession;
+    const sessionId = sessionMismatch ? requestedSession : requestedSession ?? capturedSession;
+    // 没有任何会话证据（进程跑过却从未出现 session 事件）时，无法排除会话已建立，按绑定不明确处理。
+    const sessionUnknown = !sessionMismatch && requestedSession === null && capturedSession === null;
+    // 只有 sessionId 而没有已提交助手内容，不算“进入可工作 session”。
+    const enteredWorkableSession = !sessionMismatch
+      && sessionId !== null
       && (capture.hadAssistantCommit || capture.turnEndReason === 'completed');
     const feedbackExpectation = enteredWorkableSession ? 'success' : 'failure';
-    const outcome = capture.turnEndReason === 'completed'
-      ? 'orphan_completed'
-      : sessionId === null
-        ? 'orphan_no_session'
-        : 'orphan_lost';
+    const outcome = sessionMismatch
+      ? 'session_mismatch'
+      : capture.turnEndReason === 'completed'
+        ? 'orphan_completed'
+        : sessionId === null
+          ? 'orphan_no_session'
+          : 'orphan_lost';
 
     await store.update((draft) => {
       const record = draft.activeRuns[run.runId];
@@ -186,7 +198,10 @@ export function createRunner(deps) {
         record.recovered = { verdict, at: record.endedAt };
       }
       const issue = issueState(draft, run.repository, run.issueNumber);
-      if (issue.binding && !issue.binding.sessionId && sessionId) issue.binding.sessionId = sessionId;
+      if (issue.binding && !issue.binding.sessionId && sessionId && !sessionMismatch) {
+        issue.binding.sessionId = sessionId;
+      }
+      if (issue.binding && sessionUnknown) issue.binding.sessionUnresolved = true;
       if (issue.lastRun) {
         issue.lastRun.exitCode = null;
         issue.lastRun.outcome = outcome;
@@ -207,6 +222,8 @@ export function createRunner(deps) {
       verdict,
       outcome,
       sessionId,
+      sessionMismatch,
+      sessionUnknown,
       pid: run.pid,
     });
 
@@ -683,14 +700,27 @@ export function createRunner(deps) {
         return;
       }
 
-      if (prepared.currentBranch !== null && prepared.branch !== prepared.currentBranch) {
+      const branchDrift = prepared.currentBranch !== null && prepared.branch !== prepared.currentBranch;
+      if (branchDrift) {
         logger.warn(
           `${run.repository}#${run.issueNumber} 工作目录当前在 ${prepared.currentBranch}，绑定记录为 ${prepared.branch}；按现有检出继续`,
         );
+        audit.append({
+          event: 'workdir_branch_drift',
+          runId: run.runId,
+          repository: run.repository,
+          issueNumber: run.issueNumber,
+          bindingBranch: prepared.branch,
+          currentBranch: prepared.currentBranch,
+        });
       }
       await store.update((draft) => {
         const record = draft.activeRuns[run.runId];
-        if (record) record.dir = prepared.dir;
+        if (record) {
+          record.dir = prepared.dir;
+          record.currentBranch = prepared.currentBranch;
+          record.branchDrift = branchDrift;
+        }
         const issueRecord = issueState(draft, run.repository, run.issueNumber);
         if (issueRecord.binding) issueRecord.binding.worktreeCreated = prepared.worktreeCreated;
         if (issueRecord.lastRun) issueRecord.lastRun.dir = prepared.dir;
@@ -705,14 +735,21 @@ export function createRunner(deps) {
         requester: run.trigger.author,
       });
 
-      const handle = harness.launch({
-        runId: run.runId,
-        kind: run.kind,
-        dir: prepared.dir,
-        sessionId: run.kind === 'resume' ? run.sessionId : null,
-        task,
-        runDir: run.runDir,
-      });
+      let handle;
+      try {
+        handle = harness.launch({
+          runId: run.runId,
+          kind: run.kind,
+          dir: prepared.dir,
+          sessionId: run.kind === 'resume' ? run.sessionId : null,
+          task,
+          runDir: run.runDir,
+        });
+      } catch (error) {
+        // 创建 run 目录 / 打开捕获文件等 pre-spawn 失败：按启动失败结算，不留永久 starting。
+        await failRun(run, HARNESS_FAILURE.spawnFailed, error.message);
+        return;
+      }
 
       const pid = handle.pid;
       // 进程签名只是避免 PID 重用误判的附加证据；取不到时不影响本轮调用。
@@ -903,20 +940,12 @@ export function createRunner(deps) {
     const record = store.read().activeRuns[run.runId];
     if (record?.feedback?.success) return true;
     try {
-      const existing = await github.listRecentComments(run.repository, run.issueNumber, { pageSize: 100 });
-      const triggerAt = Date.parse(run.trigger?.at ?? '') || 0;
-      // RESUME 复用同一个 sessionId，因此必须同时用本次触发时间区分，否则会把上一条 START 的确认当成自己的。
-      const found = existing.some(
-        (comment) =>
-          isBotFeedback(comment.body) &&
-          String(comment.body).trimStart().startsWith(`BOT:${config.runnerName}`) &&
-          String(comment.body).includes(sessionId) &&
-          (Date.parse(comment.created_at ?? '') || 0) >= triggerAt,
-      );
-      if (!found) {
+      // 幂等依据是本机 append-only 审计：不依赖 GitHub 与本机时钟顺序，也能区分复用同一 sessionId 的多次触发。
+      const alreadySent = audit.has({ event: 'feedback_sent', runId: run.runId, kind: 'success' });
+      if (!alreadySent) {
         await github.postComment(run.repository, run.issueNumber, successBody(sessionId));
       }
-      await markFeedback(run.runId, 'success', { alreadyPresent: found });
+      await markFeedback(run.runId, 'success', { alreadyPresent: alreadySent });
       return true;
     } catch (error) {
       audit.append({
@@ -942,19 +971,11 @@ export function createRunner(deps) {
     const record = store.read().activeRuns[run.runId];
     if (record?.feedback?.failure) return true;
     try {
-      const existing = await github.listRecentComments(run.repository, run.issueNumber, { pageSize: 100 });
-      const triggerAt = Date.parse(run.trigger?.at ?? '') || 0;
-      const found = existing.some(
-        (comment) =>
-          isBotFeedback(comment.body) &&
-          String(comment.body).trimStart().startsWith(`BOT:${config.runnerName}`) &&
-          String(comment.body).includes('失败') &&
-          (Date.parse(comment.created_at ?? '') || 0) >= triggerAt,
-      );
-      if (!found) {
+      const alreadySent = audit.has({ event: 'feedback_sent', runId: run.runId, kind: 'failure' });
+      if (!alreadySent) {
         await github.postComment(run.repository, run.issueNumber, failureBody(category));
       }
-      await markFeedback(run.runId, 'failure', { category, alreadyPresent: found });
+      await markFeedback(run.runId, 'failure', { category, alreadyPresent: alreadySent });
       return true;
     } catch (error) {
       audit.append({
@@ -975,15 +996,14 @@ export function createRunner(deps) {
    */
   async function sendRefusalFeedback(repository, issue, category) {
     try {
-      const existing = await github.listRecentComments(repository.repo, issue.number, { pageSize: 100 });
-      const marker = FAILURE_LABELS[category] ?? '失败';
-      const found = existing.some(
-        (comment) =>
-          isBotFeedback(comment.body) &&
-          String(comment.body).trimStart().startsWith(`BOT:${config.runnerName}`) &&
-          String(comment.body).includes(marker),
-      );
-      if (!found) {
+      const alreadySent = audit.has({
+        event: 'feedback_sent',
+        repository: repository.repo,
+        issueNumber: issue.number,
+        kind: 'refusal',
+        category,
+      });
+      if (!alreadySent) {
         await github.postComment(repository.repo, issue.number, failureBody(category));
       }
       audit.append({
@@ -992,7 +1012,7 @@ export function createRunner(deps) {
         issueNumber: issue.number,
         kind: 'refusal',
         category,
-        alreadyPresent: found,
+        alreadyPresent: alreadySent,
       });
       return true;
     } catch (error) {

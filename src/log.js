@@ -63,6 +63,37 @@ export function createAuditLog(stateDir) {
   return {
     file,
     /**
+     * 按字段回查是否已经写入过某条审计记录（例如“这次运行的接单确认是否已经发出”）。
+     * 本机 append-only 记录比跨主机时间戳比较可靠：不受 GitHub 与本机时钟差异影响。
+     * @param {object} match 需要匹配的字段（undefined 字段不参与比较）
+     */
+    has(match) {
+      let text;
+      try {
+        text = fs.readFileSync(file, 'utf8');
+      } catch {
+        return false;
+      }
+      for (const line of text.split('\n')) {
+        if (line.trim() === '') continue;
+        let record;
+        try {
+          record = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        let matched = true;
+        for (const [key, value] of Object.entries(match)) {
+          if (record[key] !== value) {
+            matched = false;
+            break;
+          }
+        }
+        if (matched) return true;
+      }
+      return false;
+    },
+    /**
      * 追加一条审计记录；写入失败不影响本轮执行，只打印到终端。
      * @param {object} record
      */

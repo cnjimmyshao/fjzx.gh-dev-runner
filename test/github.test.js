@@ -17,6 +17,13 @@ function createExec(handler) {
   return { exec, calls };
 }
 
+test('authStatus 只校验目标 host 的 active account', async () => {
+  const { exec, calls } = createExec(() => 'ok');
+  const client = createGithubClient({ exec });
+  await client.authStatus();
+  assert.deepEqual(calls[0].args, ['auth', 'status', '--hostname', 'github.com', '--active']);
+});
+
 test('listIssuesSince 组装查询参数、跨页读取并排除 Pull Request', async () => {
   const page1 = Array.from({ length: 2 }, (_, index) => ({ number: index + 1, updated_at: 'u' }));
   const { exec, calls } = createExec((args) => {
