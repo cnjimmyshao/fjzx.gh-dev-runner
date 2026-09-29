@@ -16,9 +16,9 @@
 
 Runner、Runner runtime state 与 Harness 使用三个独立边界：
 
-- Runner 的 `.env` 是人工部署配置入口，只保存 Runner 自身需要的部署参数；真实 `.env` 不入 Git，仓库只提供不含真实凭据的 `.env.example`。仓库、授权人、并发等稳定语义仍以 [本机配置与状态 Schema](04-local-state.md) 和 [Harness 并发与轮询调度](05-harness-scheduling.md) 为准，`.env` 的表示方式不得破坏 `repositories[].allowedActors` 这类关联关系。
+- Runner 的 `.env` 是 V1 人工部署配置的规范入口，只保存 Runner 自身需要的部署参数；真实 `.env` 不入 Git，仓库只提供不含真实凭据的 `.env.example`。仓库、授权人、并发等稳定语义仍以 [本机配置与状态 Schema](04-local-state.md) 和 [Harness 并发与轮询调度](05-harness-scheduling.md) 为准，`.env` 的表示方式不得破坏 `repositories[].allowedActors` 这类关联关系。
 - `runtime.stateDir` 是 Runner 自动维护 state / task bindings / logs 的可配置根目录；`.local/` 只能作为部署示例或默认选择，不能硬编码为唯一位置。
-- `DSH_HOME` 归 Harness 管理，保存 credentials、profiles、sessions 与其他 Harness 持久化数据。模型 API Key 由 Harness 当前版本支持的凭据机制管理，Runner 不建立第二份模型凭据存储。
+- `DSH_HOME` 归 Harness 管理，保存 credentials、profiles、sessions 与其他 Harness 持久化数据。模型 API Key 由 Harness 当前版本支持的凭据机制管理，Runner 不建立第二份模型凭据存储，也不解析或记录凭据值；若实际 Harness 版本只能通过环境变量取得凭据，只允许将明确 allowlist 中的对应变量从父进程原样透传给 Harness 子进程。
 
 Runner 启动 Harness 时不得把完整 `process.env` 无差别作为 Harness 配置面。子进程保留 Node／OS／`gh`／Harness 正常启动及定位本机配置所需的最小系统环境，显式传入 `DSH_HOME` 等允许变量；其他确需继承的变量进入明确 allowlist。
 
