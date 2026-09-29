@@ -67,8 +67,8 @@ export function validateState(value) {
       || !recoverableStatuses.has(run.status)) {
       throw new StateError(`activeRuns.${runId} 缺少保守恢复所需字段`);
     }
-    if (['running', 'unknown'].includes(run.status) && (!Number.isInteger(run.pid) || run.pid <= 0)) {
-      throw new StateError(`activeRuns.${runId} 的 ${run.status} 状态缺少有效 pid`);
+    if (run.status === 'running' && (!Number.isInteger(run.pid) || run.pid <= 0)) {
+      throw new StateError(`activeRuns.${runId} 的 running 状态缺少有效 pid`);
     }
   }
   return value;
@@ -82,7 +82,6 @@ export class StateStore {
   #file;
   #state;
   #chain = Promise.resolve();
-  #ownershipCheck = null;
 
   /** @param {string} stateDir */
   constructor(stateDir) {
@@ -93,14 +92,6 @@ export class StateStore {
 
   get file() {
     return this.#file;
-  }
-
-  /**
-   * 注册实例锁归属校验：每次写盘前确认本进程仍是唯一写入者，防止锁被接管后继续覆盖状态。
-   * @param {(() => void)|null} check
-   */
-  setOwnershipCheck(check) {
-    this.#ownershipCheck = check;
   }
 
   /** 文件不存在视为首次接入；存在但无法解析或版本不支持时拒绝启动。 */
@@ -161,7 +152,6 @@ export class StateStore {
 
   /** @param {object} draft */
   #write(draft) {
-    if (this.#ownershipCheck !== null) this.#ownershipCheck();
     const tmp = `${this.#file}.tmp-${process.pid}`;
     // state.json 含私有仓库身份、本机路径与 session 标识，与 audit / runs / lock 一致用 0600。
     const handle = fs.openSync(tmp, 'w', 0o600);
