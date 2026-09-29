@@ -35,6 +35,15 @@ AND
 repoActive < repository.maxConcurrentHarnesses
 ```
 
+容量检查与任务领取必须放在**同一个 Runner 进程内的短串行临界区**中。V1 不允许两个重叠 polling cycle 同时执行“检查容量 → claim → 写入 starting”这段路径：
+
+1. 进入 claim 临界区；
+2. 重新从持久化运行态计算 `machineActive` / `repoActive`；
+3. 容量允许时，按 Trigger / State Contract 条件式领取一个 Issue，并把对应 active run 写成 starting；
+4. 状态写入成功后释放临界区，再 spawn / 继续 Harness 生命周期；容量不足或 claim 失败同样立即释放。
+
+临界区只串行化**领取动作**，不串行化已经启动的 Harness；多个 Harness 仍可按配置并发运行。首版是单机单 Runner 实例，因此不引入数据库锁、分布式锁或全局原子计数服务。若未来允许多个 Runner 进程共享同一份本机状态，再单独修改 Contract。
+
 ## Issue 级 single-flight
 
 机器级和仓库级容量之外，还有一条独立且更简单的任务约束：
