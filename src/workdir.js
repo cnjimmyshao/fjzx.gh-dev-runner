@@ -145,19 +145,23 @@ async function resolveStartPoint(git, source, baseBranch) {
  */
 function defaultGitExec(bin, args, options = {}) {
   return new Promise((resolve) => {
-    execFile(
-      bin,
-      args,
-      { cwd: options.cwd, timeout: options.timeoutMs, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 },
-      (error, stdout, stderr) => {
-        resolve({
-          code: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
-          stdout: stdout ?? '',
-          stderr: stderr ?? '',
-          error: error ?? null,
-        });
-      },
-    );
+    const done = (error, stdout, stderr) =>
+      resolve({
+        code: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
+        stdout: stdout ?? '',
+        stderr: stderr ?? '',
+        error: error ?? null,
+      });
+    try {
+      execFile(
+        bin,
+        args,
+        { cwd: options.cwd, timeout: options.timeoutMs, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 },
+        done,
+      );
+    } catch (error) {
+      done(error, '', error.message ?? String(error));
+    }
   });
 }
 

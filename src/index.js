@@ -13,8 +13,10 @@
  *   node src/index.js resolve-session --repo owner/name --issue <n> --no-session
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
 
 import { ConfigError, checkEnvironment, loadConfig } from './config.js';
 import { createGithubClient } from './github.js';
@@ -37,11 +39,13 @@ const USAGE = `用法:
 export function parseArgs(argv) {
   const options = { command: 'run', envFile: null, once: false, wait: false, flags: {} };
   const rest = [...argv];
-  if (rest[0] === 'resolve-run' || rest[0] === 'resolve-session') {
-    options.command = rest.shift();
-  }
   while (rest.length > 0) {
     const token = rest.shift();
+    // 子命令可以出现在选项前后，便于 `--env <path> resolve-run ...` 这种写法。
+    if (token === 'resolve-run' || token === 'resolve-session') {
+      options.command = token;
+      continue;
+    }
     switch (token) {
       case '--env':
         options.envFile = requireValue(rest, '--env');
@@ -175,8 +179,10 @@ async function runCycleSafely(runner, logger, audit) {
 
 /**
  * 人工恢复动作；只在没有活跃 Runner 实例时执行，避免两个写入者。
+ * 这里只保证 stateDir 存在，不要求 sourceDir / DSH_BIN 仍然完好——恢复场景下它们可能已经不可用。
  */
 async function runResolveCommand(options, config, stdout, deps) {
+  fs.mkdirSync(config.runtime.stateDir, { recursive: true });
   const store = new StateStore(config.runtime.stateDir);
   store.load();
   const lock = acquireInstanceLock(config.runtime.stateDir, deps);
@@ -243,7 +249,7 @@ async function resolveSession(options, store, stdout) {
 }
 
 const invokedDirectly = process.argv[1] !== undefined
-  && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname);
+  && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
 
 if (invokedDirectly) {
   main()

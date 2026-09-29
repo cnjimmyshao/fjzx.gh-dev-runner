@@ -137,7 +137,7 @@ export function createRunner(deps) {
         issue.lastRun.outcome = outcome;
         issue.lastRun.endedAt = record?.endedAt ?? nowIso();
       }
-      if (issue.lastTrigger && issue.lastTrigger.sourceId === run.trigger.sourceId) {
+      if (issue.lastTrigger && issue.lastTrigger.sourceId === run.trigger?.sourceId) {
         issue.lastTrigger.status = outcome;
       }
     });
@@ -629,7 +629,8 @@ export function createRunner(deps) {
       });
 
       const pid = handle.pid;
-      const signature = pid === null ? null : await harness.readSignature(pid);
+      // 进程签名只是避免 PID 重用误判的附加证据；取不到时不影响本轮调用。
+      const signature = pid === null ? null : await harness.readSignature(pid).catch(() => null);
       await store.update((draft) => {
         const record = draft.activeRuns[run.runId];
         if (!record) return;

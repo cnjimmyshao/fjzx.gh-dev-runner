@@ -347,6 +347,38 @@ test('readCapture 只汇总技术事实，供重启后保守恢复使用', async
   }
 });
 
+test('分类器匹配本机实测与本机研报记录的 Harness 错误文本', () => {
+  // 前两条为本机 0.2.0-rc.2 隔离 DSH_HOME 实测输出；后两条见并发实测报告的记录。
+  assert.deepEqual(
+    classifyHarnessResult({
+      exitCode: 1,
+      errorMessage: 'session "session-x" does not exist; omit --session-id to start a new Session',
+    }),
+    { ok: false, category: HARNESS_FAILURE.sessionRefused },
+  );
+  assert.deepEqual(
+    classifyHarnessResult({
+      exitCode: 1,
+      errorMessage: 'a task is required, for example: dsh --profile headless "run the tests"',
+    }),
+    { ok: false, category: HARNESS_FAILURE.harnessError },
+  );
+  assert.deepEqual(
+    classifyHarnessResult({
+      exitCode: 1,
+      errorMessage: 'session "session-x" is already owned by an active write handle',
+    }),
+    { ok: false, category: HARNESS_FAILURE.sessionBusy },
+  );
+  assert.deepEqual(
+    classifyHarnessResult({
+      exitCode: 1,
+      errorMessage: 'session "session-x" was recorded in "/a", not "/b"',
+    }),
+    { ok: false, category: HARNESS_FAILURE.sessionRefused },
+  );
+});
+
 test('probe 依据 pid 与启动时间签名区分仍在运行 / 已退出 / pid 重用', async () => {
   const { dir, config } = makeHarnessConfig();
   try {

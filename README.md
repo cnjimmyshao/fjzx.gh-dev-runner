@@ -2,7 +2,7 @@
 
 轻量、可部署在不同执行电脑上的 GitHub Issue 接单与 DeepSeek Harness 会话续接工具。
 
-**当前阶段：已确定 headless CLI 方向，尚无可运行的接单程序；本机 0.1.5-rc.2 的首轮执行与同会话续接已实测通过（见 `scripts/headless-session/`），接单闭环仍待实现。** 示例命令不是已上线功能；本工具尚未部署或接管真实开发任务。
+**当前阶段：V1 最小闭环已按 [Issue #48](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/48) 在当前 main 上实现（`src/`，Node.js 24 LTS，`npm start` / `npm test`），本机验证状态见 [开发环境与验证](docs/development.md)。尚未用真实模型凭据跑通一次完整 Runner → Harness → Dev 轮次，也尚未部署或接管真实开发任务。**
 
 ## 目标
 
@@ -18,11 +18,19 @@ DeepSeek 模型 API Key 在本机配置并保存，由 Harness 用于模型调�
 - [文档导航](docs/README.md)：Current、ADR、Research 与 Archive 的分工。
 - [当前需求](docs/current/README.md)：已确认目标、边界与尚未落实的部分。
 - [Runner 激活与任务触发](docs/current/03-runner-trigger.md)：V1 的 `runnerName` 与 `@<runnerName>` 结尾触发 Contract。
-- [开发环境与验证](docs/development.md)：本机 CLI 验证结果与最小实现前的口径。
+- [开发环境与验证](docs/development.md)：运行方式、`.env` 配置、验证分层与本次实际证据。
 - [CLI 本机验证报告](docs/research/2026-09-23-local-harness-cli-first-run-and-resume.md)：实际版本、实测结果与遗留取舍。
-- [headless 会话调用与续接](scripts/headless-session/README.md)：本机实测通过的调用／续接脚本及其边界。
+- [共享 DSH_HOME 并发实测](docs/research/2026-09-29-shared-dsh-home-concurrency.md)：官方 headless 的并发与单 session 单写入证据。
 
-开发入口是关联 Issue。Issue 保存问题与决定，PR 交付变更；读取仓库规则后按任务执行，不依赖聊天里另发一份长提示词。当前没有 package.json、安装脚本或本工具的运行命令；外部 Review 集成是否已启用需另行核验，不能据此声称环境已就绪。
+开发入口是关联 Issue。Issue 保存问题与决定，PR 交付变更；读取仓库规则后按任务执行，不依赖聊天里另发一份长提示词。
+
+```bash
+cp .env.example .env     # 填写 RUNNER_NAME / REPOSITORIES_JSON / STATE_DIR / DSH_BIN 等
+npm start                # 常驻轮询；node src/index.js --once 只跑一轮
+npm test                 # Node 24 下运行全部测试
+```
+
+Runner 直接以 Node.js 24 运行，没有运行时依赖与安装脚本，也不打包成单文件可执行程序；`scripts/headless-session/` 是 0.1.5-rc.2 时期的一次性验证脚本，不是 Runner 的运行路径。外部 Review 集成是否已启用需另行核验，不能据此声称环境已就绪。
 
 ## 公开仓库与本机数据
 

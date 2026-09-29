@@ -29,29 +29,40 @@ export class GithubError extends Error {
  */
 export function defaultExec(bin, args, options = {}) {
   return new Promise((resolve, reject) => {
-    const child = execFile(
-      bin,
-      args,
-      {
-        encoding: 'utf8',
-        timeout: options.timeoutMs,
-        env: options.env ?? process.env,
-        maxBuffer: options.maxBuffer ?? 32 * 1024 * 1024,
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          reject(
-            new GithubError(`${bin} ${args[0] ?? ''} 失败: ${firstLine(stderr) || error.message}`, {
-              kind: error.killed ? 'timeout' : 'failed',
-              code: error.code ?? null,
-              killed: Boolean(error.killed),
-            }),
-          );
-          return;
-        }
-        resolve({ stdout, stderr });
-      },
-    );
+    let child;
+    try {
+      child = execFile(
+        bin,
+        args,
+        {
+          encoding: 'utf8',
+          timeout: options.timeoutMs,
+          env: options.env ?? process.env,
+          maxBuffer: options.maxBuffer ?? 32 * 1024 * 1024,
+        },
+        (error, stdout, stderr) => {
+          if (error) {
+            reject(
+              new GithubError(`${bin} ${args[0] ?? ''} 失败: ${firstLine(stderr) || error.message}`, {
+                kind: error.killed ? 'timeout' : 'failed',
+                code: error.code ?? null,
+                killed: Boolean(error.killed),
+              }),
+            );
+            return;
+          }
+          resolve({ stdout, stderr });
+        },
+      );
+    } catch (error) {
+      reject(
+        new GithubError(`${bin} 无法启动: ${error.code ?? error.message}`, {
+          kind: 'spawn_failed',
+          code: error.code ?? null,
+        }),
+      );
+      return;
+    }
     if (options.input !== undefined) {
       child.stdin.end(options.input);
     } else {

@@ -489,12 +489,17 @@ function describeError(error) {
  */
 function defaultExec(bin, args, options = {}) {
   return new Promise((resolve) => {
-    execFile(bin, args, { timeout: options.timeoutMs, encoding: 'utf8' }, (error, stdout, stderr) => {
-      resolve({
-        code: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
-        stdout: stdout ?? '',
-        stderr: stderr ?? '',
+    try {
+      execFile(bin, args, { timeout: options.timeoutMs, encoding: 'utf8' }, (error, stdout, stderr) => {
+        resolve({
+          code: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
+          stdout: stdout ?? '',
+          stderr: stderr ?? '',
+        });
       });
-    });
+    } catch (error) {
+      // 例如沙箱拒绝执行 ps：返回不可判定，由调用方按 unknown 保守处理。
+      resolve({ code: 1, stdout: '', stderr: error.message ?? String(error) });
+    }
   });
 }
