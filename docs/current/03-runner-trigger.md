@@ -25,9 +25,9 @@ runnerName = MB01
 Runner 只在**授权主体**能够表达 Runner 控制意图的位置检查命令：
 
 - 由授权主体创建的新建 Issue 的初始正文；
-- 已有 Issue 中当前最新一条 **eligible control comment**。
+- 已有 Issue 中当前最新一条 **eligible control comment**（尚未被扫描水位越过的那一条）。
 
-eligible control comment 指：作者属于该仓库配置允许触发 Runner 的授权主体，并且该评论不是 Runner 自己生成的接单确认、启动失败等控制反馈。
+eligible control comment 指：作者属于该仓库配置允许触发 Runner 的授权主体，并且该评论不是 Runner 自己生成的接单确认、启动失败等控制反馈。扫描水位覆盖所有已读评论，候选判定则只作用于当前最新那一条——两者是分开的，见下文“Issue Body 与最新 Comment”。
 
 V1 规定：**一个 Issue 的当前 task binding 只归一个 Runner**。正常流程中不会让 MB01、HZ01 等多个 Runner 同时处理同一个 Issue；如需换 Runner，必须先由维护者明确完成任务绑定迁移，而不是靠多台机器同时竞争评论。
 
@@ -46,9 +46,9 @@ MB01 已接单，Session ID: <session-id>
 
 任何 trim 后以 `BOT:` 开头的评论都属于 Runner 控制反馈，永远不参与 eligible control comment 选择。该前缀只供 Runner 自动反馈使用，人工控制评论不使用它。这样不依赖本机 comment-id 共享，也不需要多个 Runner 互相同步状态。
 
-未授权用户的评论和 `BOT:` 控制反馈可以正常存在于 Issue 中，但它们不参与“当前候选”的选择，也不能覆盖授权主体已经留下的当前控制意图。
+未授权用户的评论和 `BOT:` 控制反馈可以正常存在于 Issue 中，但它们不参与“当前候选”的选择，也不会触发 Harness；不过它们仍会被扫描并推进扫描水位，因此不会在之后（例如作者被加入 `allowedActors`）变成一条新的命令。授权主体要改变控制意图，应发布新的控制评论。
 
-V1 不把同一 Issue 的所有历史评论都当成待执行命令队列。Issue Body 是一次性的初始触发候选；进入评论阶段后，只以**当前最新一条 eligible control comment**作为触发候选。
+V1 不把同一 Issue 的所有历史评论都当成待执行命令队列。Issue Body 是一次性的初始触发候选；进入评论阶段后，只读取**当前最新一条尚未被扫描水位越过的评论**，再判定它是不是合格的执行请求（是否属于 eligible control comment、是否以 `@<runnerName>` 结尾）。
 
 对正文做首尾空白清理（trim）后，如果正文以：
 
@@ -105,33 +105,40 @@ runner:mb01 + @dev
 
 Body 是一次性入口：Runner 只读取并判断一次，之后就按这次结果处理。后续编辑既不撤销、也不重新触发、更不重新评估——把命令删掉不会取消已读到的请求，把命令加上去也不会被当成新请求；需要改变意图时发布新评论，评论才是活的控制通道。重复扫描同样不会再次触发。
 
-已有 Issue 进入评论阶段后，V1 只在该 Issue **当前没有正在运行的 Harness** 时读取它的控制内容，并且只检查当前最新一条 eligible control comment。更早的 eligible control comment 即使以 `@<runnerName>` 结尾，也不排队、不补执行。
+已有 Issue 进入评论阶段后，V1 只在该 Issue **当前没有正在运行的 Harness** 时读取它的控制内容，并且只检查当前最新一条 eligible control comment（**尚未被扫描水位越过**的那一条）。更早的 eligible control comment 即使以 `@<runnerName>` 结尾，也不排队、不补执行。
 
 如果这个 Issue 已经有 Harness 处于 starting / running / unknown：
 
 - Runner 直接跳过这个 Issue；
 - 不读取或解释该 Issue 在运行期间新增的评论；
-- 不更新该 Issue 的 `eligibleCommentWatermark`；
+- 不更新该 Issue 的 `commentScanWatermark`；
 - 不向当前 Harness 注入新消息；
 - 不杀掉当前 Harness；
 - 不启动第二个 Harness 写同一 task / workspace / session。
 
 这个限制只作用于**当前 Issue**。Runner 仍继续轮询其他 Issue 和其他仓库，并可在调度并发上限允许时启动它们的 Harness。
 
-每个 Issue 只需要一个单调前进的评论水位（逻辑名可记为 `eligibleCommentWatermark`），表示“这个 Issue 上一次在空闲状态下已经处理到的最新 eligible 人类评论”。当一条 Comment 触发 Harness 后，该水位在整个 Harness 运行期间保持不变。
+每个 Issue 只需要一个单调前进的**评论扫描水位**（逻辑名可记为 `commentScanWatermark`），表示“这个 Issue 已经扫描到的最新评论 identity”。它记录的是**扫描进度**，不是“哪些评论曾经是合格候选”：未授权用户的评论、`BOT:<runnerName>` 自动反馈以及不以 `@<runnerName>` 结尾的普通回复虽然都不触发 Harness，仍然被扫描、同样推进水位。当一条 Comment 触发 Harness 后，该水位在整个 Harness 运行期间保持不变。
 
-当前 Harness 明确结束后，下一次轮询才重新读取该 Issue。此时只看**当时最新**的 eligible control comment：
+之所以让水位覆盖所有已扫描评论，是为了不重放历史：如果水位只记录合格候选，那么一条当时不合格的评论（例如作者尚未被加入 `allowedActors`）会在条件变化后重新变成“新命令”。水位越过它之后，它就不再是候选；需要执行时应发布**新的控制评论**。
 
-- 如果没有比水位更新的 eligible comment：什么也不做；
-- 如果最新 eligible comment 比水位更新、且 trim 后以 `@<runnerName>` 结尾：把水位推进到该 comment，并 RESUME 原 task / workspace / session；
-- 如果最新 eligible comment 比水位更新、但不是命令：把水位推进到该 comment，不启动 Harness；
+评论被原地编辑不改变上述结论：已经越过水位的评论不会因为编辑而重新激活，正文版本校验只用于解决“当前候选从读取到领取之间被编辑”这一个并发窗口，不是让历史评论重新变成命令的机制。
+
+当前 Harness 明确结束后，下一次轮询才重新读取该 Issue。此时只看**当时最新**的一条评论：
+
+- 如果它不新于扫描水位，说明已经扫描过，什么也不做；
+- 如果它新于水位，就把水位推进到该 comment，然后再判定它是否属于 eligible control comment、正文 trim 后是否以 `@<runnerName>` 结尾：
+  - 两者都成立：RESUME 原 task / workspace / session；
+  - 否则：只推进水位，不启动 Harness。
 - 运行期间夹在旧水位和当前最新评论之间的其他评论不排队、不逐条补执行。
+
+水位推进本身不代表该评论成为执行候选，也不代表已经决定不再执行；它只表示“这条评论已经看过”。
 
 Harness 运行期间的新回复不形成待执行队列。当前 Harness 结束以后，再看 GitHub 当时的最新人类意图即可。
 
-未授权用户的新评论不参与候选选择。Runner 自动生成的接单确认、启动失败等控制反馈统一以 `BOT:<runnerName>` 开头，因此直接排除，不参与 eligible control comment 选择。
+未授权用户的评论不参与候选选择，`BOT:<runnerName>` 开头的 Runner 自动反馈同样永不参与；但两者都会被扫描并推进水位，因此不会在授权变化或重新读取后变成命令。
 
-同一个当前候选即使正文中多次出现相同命令，也只作为一次触发处理；同一 Issue Body 或同一 eligible control comment 不能因正常轮询、重启或重复读取而重复执行。
+同一个当前候选即使正文中多次出现相同命令，也只作为一次触发处理；同一 Issue Body 或同一条评论不能因正常轮询、重启或重复读取而重复执行。
 
 ## 匹配规则
 
@@ -149,10 +156,10 @@ V1 保持简单，并把 Issue Body、空闲 Comment 检查和运行中跳过分
 **Comment：**
 
 1. 先检查该 Issue 是否已有 Harness 处于 starting / running / unknown；如果有，直接跳过该 Issue，不读取新评论、不推进水位；
-2. Issue 空闲时，读取当前最新一条 eligible control comment：排除 trim 后以 `BOT:` 开头的 Runner 自动反馈，并确认作者属于授权主体；
-3. 若该 comment identity 不新于 `eligibleCommentWatermark`，不做任何事；
-4. 若它更新，先判断正文 trim 后是否以 `@${runnerName}` 结尾；
-5. 用一次原子状态更新同时推进 `eligibleCommentWatermark` 与本次执行状态：是命令则记录该 Issue 已进入 starting 并 START / RESUME；不是命令则只推进水位，不记录执行状态。该更新只在该 Issue 此刻仍无运行记录、该 Issue 的水位仍等于读取候选时的旧值、且这条评论仍是刚才读到的那一个 eligible 候选时才生效，并明确只有写入成功的那个执行者可以 spawn Harness；条件不成立表示这次触发已被别的执行者领取，本次不做任何事、也不 spawn。水位也必须作为前提一起校验：只检查“仍无运行记录”会漏掉一种情况——赢家已经跑完并释放运行状态，落后的执行者这时再进入本步，运行记录与候选都还对得上，却没有发现自己读到的那条评论早已被处理过，于是同一条命令被再执行一次。
+2. Issue 空闲时，读取当前最新一条评论；
+3. 若该 comment identity 不新于 `commentScanWatermark`，说明已经扫描过，不做任何事；
+4. 若它更新，先排除 trim 后以 `BOT:` 开头的 Runner 自动反馈，并确认作者属于授权主体；两者都通过时再判断正文 trim 后是否以 `@${runnerName}` 结尾。这一步只判定“它是不是候选、是不是命令”，判定结果不改变水位覆盖所有已扫描评论这一事实；
+5. 用一次原子状态更新同时推进 `commentScanWatermark` 与本次执行状态：是命令则记录该 Issue 已进入 starting 并 START / RESUME；不是命令、或未通过授权／`BOT:` 排除则只推进水位，不记录执行状态。该更新只在该 Issue 此刻仍无运行记录、该 Issue 的水位仍等于读取候选时的旧值、且这条评论仍是刚才读到的那一个候选时才生效，并明确只有写入成功的那个执行者可以 spawn Harness；条件不成立表示这次触发已被别的执行者领取，本次不做任何事、也不 spawn。水位也必须作为前提一起校验：只检查“仍无运行记录”会漏掉一种情况——赢家已经跑完并释放运行状态，落后的执行者这时再进入本步，运行记录与候选都还对得上，却没有发现自己读到的那条评论早已被扫描过，于是同一条命令被再执行一次。
 
 这两处都不能拆成“先推进水位／先标记 Body 已检查，再记录 starting 后启动”，也不能反过来先 spawn Harness、之后再补记录 claim / starting。Runner 在两次写入之间崩溃时，重启后这条触发已经不新于水位、或 Body 已经算检查过，而该 Issue 又没有任何运行记录，于是命令被永久静默丢弃。反过来先启动 Harness 再补记录，重启后又会因为查不到运行记录而重新领取同一 Issue，可能启动第二个写入者。因此水位推进／Body 检查状态与本次执行的持久化必须一起生效，且发生在 spawn 之前：写入成功才允许 spawn。
 
@@ -160,17 +167,19 @@ V1 保持简单，并把 Issue Body、空闲 Comment 检查和运行中跳过分
 
 如果原子状态已经成功落盘，但 Runner 在 spawn 是否完成为止无法可靠确认时崩溃，重启后应把这次调用当成 starting / unknown 的恢复问题：保守避开第二个写入者，等待进程探测或明确人工恢复；不能因为重启或无法确认，就把同一个 trigger 当作新的未处理请求再执行一次。原子写入已经表示这次触发被领取，这一点不因结果未知而失效。
 
-上面的原子要求只覆盖接单瞬间的 crash-safety，不等于引入命令队列、pending trigger、运行中评论观察或复杂恢复框架。每个 Issue 仍然只保存一次性的 Body 处理状态、单调前进的水位与运行状态，不维护运行期间的待执行命令，也不补执行中间评论。
+上面的原子要求只覆盖接单瞬间的 crash-safety，不等于引入命令队列、pending trigger、运行中评论观察或复杂恢复框架。每个 Issue 仍然只保存一次性的 Body 处理状态、单调前进的扫描水位与运行状态，不维护运行期间的待执行命令，也不补执行中间评论。
 
 V1 不解析 GitHub 的真实 mention，不依赖通知事件，也不为了 Markdown 引用、代码块等情况建设额外语法解析器。
 
-Comment 的候选校验不能只看 comment identity：GitHub 评论可以被原地编辑，identity 不变。因此条件里还要比较读取到的正文版本（例如正文摘要或 `updated_at`），编辑过就让这次领取条件不成立，重新读取当前内容再判断。Body 接受读取时的快照语义，是因为它只判断一次；评论是活的控制通道，被编辑的评论仍应是当前控制意图，不能因为读到的是旧版本而接受已删掉的命令、或漏掉刚加上的命令。
+Comment 的候选校验不能只看 comment identity：GitHub 评论可以被原地编辑，identity 不变。因此条件里还要比较读取到的正文版本（例如正文摘要或 `updated_at`），编辑过就让这次领取条件不成立，重新读取当前内容再判断。这个校验只覆盖“当前候选从读取到领取之间被编辑”的窗口；已经越过扫描水位的评论不会因为之后被编辑而重新变成命令。Body 接受读取时的快照语义，是因为它只判断一次；评论是活的控制通道，被编辑的评论仍应是当前控制意图，不能因为读到的是旧版本而接受已删掉的命令、或漏掉刚加上的命令。
 
 ## 历史与重复执行
 
 Runner 采用增量发现，不在首次接入仓库时重放全部历史命令。
 
-每个 Issue 的触发状态保持最小化：一次性的 Body 处理状态、单调前进的 `eligibleCommentWatermark`，以及“这个 Issue 当前是否有 Harness 在运行/结果未知”的任务运行状态。Harness 真正的 session 历史仍由 Harness / `DSH_HOME` 管理。
+每个 Issue 的触发状态保持最小化：一次性的 Body 处理状态、单调前进的 `commentScanWatermark`，以及“这个 Issue 当前是否有 Harness 在运行/结果未知”的任务运行状态。Harness 真正的 session 历史仍由 Harness / `DSH_HOME` 管理。
+
+增量发现的最小单位是**一条评论**：扫描水位记录已经看到过哪些评论，候选判定只作用于水位前方的当前最新评论。因此“授权变化后旧评论复活”和“历史评论被编辑后复活”都不会发生——两者都已经被水位越过；需要重新执行时发布新的控制评论。
 
 运行状态与评论水位的关系只有一条：**Issue 运行中，水位冻结；Issue 空闲后，下一次轮询才读取当前最新评论并决定是否推进水位和再次执行。** Runner 不保存运行期间出现的待执行命令；这些回复只在 Harness 结束后的下一次轮询中，以当时最新的一条为准。
 
@@ -265,7 +274,7 @@ BOT:MB01
 MB01 已接单，Session ID: abc123
 ```
 
-随后同一 Issue 中，授权主体发布的**当前最新 eligible control comment**：
+随后同一 Issue 中，授权主体发布的**当前最新评论（尚未被扫描水位越过）**：
 
 ```text
 Review 已经有结果，请继续处理剩余问题。
