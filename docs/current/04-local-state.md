@@ -233,11 +233,11 @@ Runner 重启后，对上次记录为 starting / running、但当前尚未确认
 
 **责任边界：** 本节只要求把上述运行态持久化并在重启后暴露出来，使单写入者判断与恢复有可靠输入。这些状态具体如何计入机器级／仓库级并发上限（容量记账意义上的释放条件）、一次轮询最多领取多少任务，都是调度语义，由 Harness 并发与轮询调度 Contract（[Issue #22](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/22) / [PR #23](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/pull/23)）决定；本文不预先规定容量与释放策略。该 Contract 尚未合并，因此这里不写成生效链接。
 
-完整长期追溯可继续写结构化 audit/run log，而 `state.json` 至少保存恢复必须的当前运行态。
+完整长期追溯**必须**写入持久化的 append-only audit/run history（可以是结构化日志、JSONL 或实现选择的等价本机载体），至少能够按每一轮触发回查 repository + Issue、trigger identity、START / RESUME、runner/session、开始与结束时间、技术结果以及必要的 GitHub feedback 结果。`state.json` 只保存恢复必须的当前／最近状态，不能用会被覆盖的 `lastTrigger` / `lastRun` 代替长期历史。具体历史文件布局、轮转与字段扩展属于实现细节。
 
 ### 首次 START 时 `sessionId` 可能尚不可见
 
-Issue #17 原先假定“启动 Harness 时就能记录 `sessionId`”，但本机实测（见 [START 阶段 sessionId 的创建与可见时点实测](../research/2026-09-24-start-sessionid-visibility.md)）表明存在这个窗口：在该报告记录的环境（`@deepseek-ai/dsh` 0.1.5-rc.2、维护者指定的执行电脑）下，实测到时序的两条 headless 路径（本地 runner 与官方 headless）表现为：会话在子进程启动后约 1.5–1.7 秒才创建，本地 runner 只在整轮结束时才把 `sessionId` 写进结果，官方 headless CLI 则完全没有取得该标识的调用方接口；报告中的 acp 路径本次未复现，没有给出会话创建时序。因此 `sessionId` 不能作为建立运行态记录的前提；该结论只对报告记录的版本与环境成立。
+Issue #17 原先假定“启动 Harness 时就能记录 `sessionId`”，但本机实测（见 [START 阶段 sessionId 的创建与可见时点实测](../research/2026-09-24-start-sessionid-visibility.md)）表明存在这个窗口：在该报告记录的环境（`@deepseek-ai/dsh` 0.1.5-rc.2、维护者指定的执行电脑）下，实测到时序的两条 headless 路径（本地 runner 与官方 headless）表明会话标识并非 spawn 时立即可见：**热 profile** 场景中会话约在子进程启动后 1.5–1.7 秒创建；报告同时记录了首次建立 profile 链接的**冷启动**场景，实际从进程启动到会话创建约 20.5 秒。该冷启动延迟包含启动器建立 profile 链接的成本，但对父 Runner 的等待、timeout 与按创建时间恢复关联仍是真实窗口，因此 1.5–1.7 秒不得被实现当作启动／恢复上限。本地 runner 只在整轮结束时才把 `sessionId` 写进结果，官方 headless CLI 则完全没有取得该标识的调用方接口；报告中的 acp 路径本次未复现，没有给出会话创建时序。因此 `sessionId` 不能作为建立运行态记录的前提；该结论只对报告记录的版本与环境成立。
 
 Contract 因此要求：
 
@@ -281,6 +281,20 @@ Contract 因此要求：
 - 原子写入、日志轮转等实现细节。
 
 不为每个内部字段增加维护者审批。
+
+## 首次接入与历史扫描基线
+
+首次为一个已经存在内容的仓库／Issue 建立本机状态时，**不得把接入前的历史 Body 或历史评论当成新执行请求重放**。
+
+V1 采用简单的 baseline 规则：
+
+- 对首次发现的既有 Issue，把当时读取到的初始 Body 记为已处理，不因其中历史 `@<runnerName>` 启动 Harness；
+- 把 baseline 快照中当时最新的 Comment identity 写入 `commentScanWatermark`；没有评论则保持空水位；
+- baseline 建立本身不写 `lastTrigger`、不建立 active run，也不发送接单反馈；
+- baseline 的读取与落盘必须有明确边界：落盘前若发现扫描终点已经变化，则重新读取并建立 baseline；只有成功写入 baseline **之后新增**的评论才进入正常触发扫描。这样既不回放历史，也不会因为 baseline 建立期间出现新评论而把真正的新命令静默越过；
+- 新建 Issue 的正常一次性 Body 触发不属于“首次接入历史 baseline”：Runner 已经运行并观察到的新 Issue 仍按 Trigger Contract 正常判断 Body。
+
+baseline 只解决“首次接入不重放历史”，不引入历史命令队列，也不改变后续 `commentScanWatermark` 的单调扫描语义。
 
 ## 版本与兼容
 
