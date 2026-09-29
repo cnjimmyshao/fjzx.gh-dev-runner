@@ -27,10 +27,13 @@ Runner **不复制 Harness 会话历史**，也不把 Issue 全文、PR 内容�
 | `harness.timeoutMs` | 单次调用的本机控制超时；不表示业务任务完成时限 |
 | `runtime.stateDir` | Runner 状态、锁和运行日志的本机根目录 |
 | `runtime.workspaceDir` | 独立任务工作目录／worktree 的默认父目录 |
+| `runtime.pollSeconds` | polling cycle 间隔，正整数秒；V1 默认 `300`（5 分钟），调度语义见 [Harness 并发与轮询调度](05-harness-scheduling.md) |
+| `runtime.maxConcurrentHarnesses` | 本机同时运行 Harness 的机器级上限，必须为正整数；V1 默认 `1` |
 | `runtime.capture` / `keepRunLogs` | 本机子进程输出与日志保留策略 |
 | `github.timeoutMs` / `pageSize` | `gh` 调用和分页参数 |
 | `repositories[].repo` | 接入仓库身份，使用 `owner/name` |
 | `repositories[].allowedActors` | 允许发布执行请求的 GitHub 登录名 |
+| `repositories[].maxConcurrentHarnesses` | 单仓库同时运行 Harness 的上限，必须为正整数；V1 默认 `1`，且不能绕过机器级上限 |
 | `repositories[].sourceDir` | 部署者已有仓库检出，用作创建独立任务 worktree 的源目录 |
 | `repositories[].baseBranch` / `worktreeDir` | worktree 起点与存放位置；每个任务最终目录必须唯一 |
 
