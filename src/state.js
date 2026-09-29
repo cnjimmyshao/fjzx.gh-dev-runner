@@ -56,6 +56,21 @@ export function validateState(value) {
   if (value.repositories === null || typeof value.repositories !== 'object' || Array.isArray(value.repositories)) {
     throw new StateError('state.json repositories 必须是对象');
   }
+  const recoverableStatuses = new Set(['starting', 'running', 'unknown', 'exited']);
+  for (const [runId, run] of Object.entries(value.activeRuns)) {
+    if (run === null || typeof run !== 'object' || Array.isArray(run)) {
+      throw new StateError(`activeRuns.${runId} 必须是对象`);
+    }
+    if (typeof run.runId !== 'string' || run.runId !== runId
+      || typeof run.repository !== 'string'
+      || !Number.isInteger(run.issueNumber)
+      || !recoverableStatuses.has(run.status)) {
+      throw new StateError(`activeRuns.${runId} 缺少保守恢复所需字段`);
+    }
+    if (['running', 'unknown'].includes(run.status) && (!Number.isInteger(run.pid) || run.pid <= 0)) {
+      throw new StateError(`activeRuns.${runId} 的 ${run.status} 状态缺少有效 pid`);
+    }
+  }
   return value;
 }
 
