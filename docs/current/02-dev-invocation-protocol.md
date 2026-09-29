@@ -66,7 +66,7 @@ RESUME 用于已有任务绑定和 sessionId 的后续调用。
 
 Dev 在开发过程中遇到必须由 Maintainer 决定、且已经没有不依赖该决定的工作可继续时，应把待决问题回贴原关联 Issue，然后结束本轮 Harness 调用。等待人工决定不是任务完成：原 task binding、workspace、branch、已有 PR 与 sessionId 都继续保留。
 
-等待期间不要求 Harness / Dev 自己定时轮询 Issue，也不向已经运行的 Harness 动态注入后续评论。Maintainer 的普通回复只记录讨论或决定；只有当前最新 eligible control comment 明确以 `@<runnerName>` 结尾，才表示“现在继续执行”。Runner 在后续正常 polling 中识别该新触发，并以 RESUME 续接原 session。
+等待期间不要求 Harness / Dev 自己定时轮询 Issue，也不向已经运行的 Harness 动态注入后续评论。Maintainer 的普通回复只记录讨论或决定。需要继续时应发布新的控制评论；Runner 在后续正常 polling 中只读取当前最新一条尚未被扫描水位越过的评论，先推进扫描水位，再确认它来自授权主体、不是 `BOT:` 自动反馈且以 `@<runnerName>` 结尾。只有全部成立才表示“现在继续执行”，并以 RESUME 续接原 session；若随后出现更新评论把它覆盖，则旧命令不排队、不补执行。
 
 这类 RESUME 与其他 RESUME 使用同一刷新规则：Dev 必须先读取 Issue 最新决定、相关 PR / Review、当前 head、AGENTS 与 Current，再从已有工作继续，不因等待过人工决定而新建 session、分支或重复 PR。
 
