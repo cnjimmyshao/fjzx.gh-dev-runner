@@ -27,6 +27,9 @@ const DEFAULT_BASE_BRANCH = 'main';
 const DEFAULT_GIT_BIN = 'git';
 const CAPTURE_MODES = new Set(['metadata', 'full']);
 
+/** 无论 allowlist 怎么写都不允许转发给 Harness 的保留变量（ADR 0003）。 */
+export const RESERVED_HARNESS_ENV = Object.freeze(['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']);
+
 /**
  * Runner 自身认识的全部配置键。`.env` 是人工部署的规范入口；同名进程环境变量可以覆盖
  * 取值（便于一次性验证），但不认识的变量不会被当成 Runner 配置。
@@ -263,8 +266,9 @@ export function checkEnvironment(config, deps = {}) {
     );
   }
 
-  if (!fs.existsSync(config.harness.bin)) {
-    throw new ConfigError(`DSH_BIN 不存在: ${config.harness.bin}`);
+  const harnessBin = resolveHarnessBin(config.harness.bin, deps);
+  if (harnessBin === null) {
+    throw new ConfigError(`DSH_BIN 不可用: ${config.harness.bin}`);
   }
 
   for (const repository of config.repositories) {
@@ -280,6 +284,49 @@ export function checkEnvironment(config, deps = {}) {
   }
   if (config.harness.home !== null && !fs.existsSync(config.harness.home)) {
     throw new ConfigError(`DSH_HOME 不存在: ${config.harness.home}`);
+  }
+}
+
+/**
+ * DSH_BIN 可以是不含分隔符的命令名（按 PATH 解析），也可以是绝对 / 相对路径。
+ * `.js` / `.mjs` / `.cjs` 入口由 Node 直接运行，只要求文件存在；其余入口要求可执行。
+ * @param {string} bin
+ * @param {{pathEnv?: string, isUsable?: (target: string) => boolean}} [deps]
+ * @returns {string|null} 可用入口；不可用时为 null
+ */
+export function resolveHarnessBin(bin, deps = {}) {
+  const isUsable = deps.isUsable ?? defaultIsUsableHarnessBin;
+  if (bin.includes('/')) {
+    return isUsable(bin) ? bin : null;
+  }
+  const pathEnv = deps.pathEnv ?? process.env.PATH ?? '';
+  for (const dir of pathEnv.split(path.delimiter)) {
+    if (dir === '') continue;
+    const candidate = path.join(dir, bin);
+    if (isUsable(candidate)) return candidate;
+  }
+  return null;
+}
+
+function defaultIsUsableHarnessBin(target) {
+  if (/\.(c|m)?js$/.test(target)) {
+    try {
+      return fs.statSync(target).isFile();
+    } catch {
+      return false;
+    }
+  }
+  return defaultIsExecutable(target);
+}
+
+function defaultIsExecutable(target) {
+  try {
+    const stat = fs.statSync(target);
+    if (!stat.isFile()) return false;
+    fs.accessSync(target, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -385,6 +432,9 @@ function parseAllowlist(value) {
   for (const name of names) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
       throw new ConfigError(`HARNESS_ENV_ALLOWLIST 含非法变量名: ${name}`);
+    }
+    if (RESERVED_HARNESS_ENV.includes(name.toUpperCase())) {
+      throw new ConfigError(`HARNESS_ENV_ALLOWLIST 不得包含 ${name}：Runner 不向 Harness 转发 GitHub 凭据`);
     }
   }
   return names;

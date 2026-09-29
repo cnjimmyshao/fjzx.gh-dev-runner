@@ -85,14 +85,31 @@ export function createWorkdirManager(options = {}) {
         if (!isDirectory(dir)) {
           throw new WorkdirError('任务工作目录不存在，续接必须回到原目录，需要人工恢复', 'task_dir_missing');
         }
-        return { dir, branch, source, worktreeCreated: Boolean(binding?.worktreeCreated) };
+        if (!fs.existsSync(path.join(dir, '.git'))) {
+          throw new WorkdirError('任务工作目录已存在但不是 git worktree，需要人工核对', 'task_dir_not_worktree');
+        }
+        await assertWorktreeOfSource(git, source, dir);
+        return {
+          dir,
+          branch,
+          source,
+          worktreeCreated: Boolean(binding?.worktreeCreated),
+          currentBranch: await currentBranch(git, dir),
+        };
       }
 
       if (isDirectory(dir)) {
         if (!fs.existsSync(path.join(dir, '.git'))) {
           throw new WorkdirError('任务工作目录已存在但不是 git worktree，需要人工核对', 'task_dir_not_worktree');
         }
-        return { dir, branch, source, worktreeCreated: Boolean(binding?.worktreeCreated) };
+        await assertWorktreeOfSource(git, source, dir);
+        return {
+          dir,
+          branch,
+          source,
+          worktreeCreated: Boolean(binding?.worktreeCreated),
+          currentBranch: await currentBranch(git, dir),
+        };
       }
 
       if (!isDirectory(source)) {
@@ -107,7 +124,7 @@ export function createWorkdirManager(options = {}) {
         const start = await resolveStartPoint(git, source, repository.baseBranch);
         await gitOrThrow(['-C', source, 'worktree', 'add', '-b', branch, dir, start], 'worktree_add_failed');
       }
-      return { dir, branch, source, worktreeCreated: true };
+      return { dir, branch, source, worktreeCreated: true, currentBranch: branch };
     },
   };
 
@@ -122,6 +139,40 @@ export function createWorkdirManager(options = {}) {
     }
     return result;
   }
+}
+
+/**
+ * 续接 / 复用前确认该目录确实还是配置源仓库的 worktree：
+ * 目录被替换、worktree 被移除或指向别的源仓库时明确停止，而不是在错误 checkout 里继续。
+ * @param {Function} git
+ * @param {string} source
+ * @param {string} dir
+ */
+async function assertWorktreeOfSource(git, source, dir) {
+  const listed = await git(['-C', source, 'worktree', 'list', '--porcelain']);
+  if (listed.code !== 0) {
+    throw new WorkdirError(`无法读取源仓库 worktree 列表: ${firstLine(listed.stderr)}`, 'worktree_list_failed');
+  }
+  const expected = canonicalPath(dir);
+  const registered = listed.stdout
+    .split('\n')
+    .filter((line) => line.startsWith('worktree '))
+    .map((line) => canonicalPath(line.slice('worktree '.length).trim()));
+  if (!registered.includes(expected)) {
+    throw new WorkdirError('任务工作目录不是配置源仓库的 worktree，需要人工核对', 'worktree_source_mismatch');
+  }
+}
+
+/**
+ * 当前检出分支；取不到时返回 null（只用于本机提示，不作为失败条件）。
+ * @param {Function} git
+ * @param {string} dir
+ */
+async function currentBranch(git, dir) {
+  const result = await git(['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD']);
+  if (result.code !== 0) return null;
+  const value = result.stdout.trim();
+  return value === '' ? null : value;
 }
 
 /**
@@ -168,6 +219,15 @@ function defaultGitExec(bin, args, options = {}) {
 function firstLine(text) {
   const line = String(text ?? '').split('\n').find((entry) => entry.trim() !== '');
   return line === undefined ? '' : line.trim();
+}
+
+/** git 报告的是解析过符号链接的真实路径（macOS 上 /var 与 /private/var），比较前先归一。 */
+function canonicalPath(target) {
+  try {
+    return fs.realpathSync(target);
+  } catch {
+    return path.resolve(target);
+  }
 }
 
 function isDirectory(target) {

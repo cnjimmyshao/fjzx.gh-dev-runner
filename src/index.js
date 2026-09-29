@@ -11,6 +11,7 @@
  *   node src/index.js resolve-run --run <runId> --outcome exited [--session <id>]
  *   node src/index.js resolve-session --repo owner/name --issue <n> --session <id>
  *   node src/index.js resolve-session --repo owner/name --issue <n> --no-session
+ *   node src/index.js resolve-binding --repo owner/name --issue <n> --take-ownership
  */
 
 import fs from 'node:fs';
@@ -25,12 +26,18 @@ import { acquireInstanceLock, InstanceLockError } from './instance-lock.js';
 import { createAuditLog, createLogger, truncateDiagnostic } from './log.js';
 import { createRunner } from './runner.js';
 import { StateStore, issueState } from './state.js';
-import { createWorkdirManager } from './workdir.js';
+import { branchFor, createWorkdirManager, taskDirFor } from './workdir.js';
 
 const USAGE = `用法:
   node src/index.js [--env <path>] [--once] [--wait]
   node src/index.js resolve-run --run <runId> --outcome exited|running [--session <id>]
   node src/index.js resolve-session --repo <owner/name> --issue <n> (--session <id> | --no-session)
+  node src/index.js resolve-binding --repo <owner/name> --issue <n> --take-ownership
+
+resolve-session --no-session 表示确认该任务没有可续接的 session：清除 binding.sessionId 与
+不明确标记，下一次有效控制评论按 START 新建会话。
+resolve-binding --take-ownership 表示维护者明确把该任务的绑定迁移到本机 Runner：runnerName
+按本机配置改写，目录 / 分支按本机配置重新派生，原 sessionId 清空。
 `;
 
 /**
@@ -42,7 +49,7 @@ export function parseArgs(argv) {
   while (rest.length > 0) {
     const token = rest.shift();
     // 子命令可以出现在选项前后，便于 `--env <path> resolve-run ...` 这种写法。
-    if (token === 'resolve-run' || token === 'resolve-session') {
+    if (token === 'resolve-run' || token === 'resolve-session' || token === 'resolve-binding') {
       options.command = token;
       continue;
     }
@@ -65,6 +72,9 @@ export function parseArgs(argv) {
         break;
       case '--no-session':
         options.flags.noSession = true;
+        break;
+      case '--take-ownership':
+        options.flags.takeOwnership = true;
         break;
       case '--help':
       case '-h':
@@ -100,7 +110,7 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
   const config = loadConfig({ envFile: options.envFile ?? undefined });
   const logger = createLogger(`runner:${config.runnerName}`, stdout);
 
-  if (options.command === 'resolve-run' || options.command === 'resolve-session') {
+  if (options.command.startsWith('resolve-')) {
     return runResolveCommand(options, config, stdout, deps);
   }
 
@@ -109,6 +119,8 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
   store.load();
 
   const lock = acquireInstanceLock(config.runtime.stateDir, deps);
+  // 只要本进程还可能写状态，锁就必须留着：子进程仍在运行时提前释放会让第二个 Runner 同时写 state.json。
+  process.once('exit', () => lock.release());
   const github = deps.github ?? createGithubClient({
     timeoutMs: config.github.timeoutMs,
     pageSize: config.github.pageSize,
@@ -163,7 +175,9 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     process.removeListener('SIGINT', signalHandler);
     process.removeListener('SIGTERM', signalHandler);
     audit.append({ event: 'runner_stopped', runnerName: config.runnerName, pid: process.pid });
-    lock.release();
+    // 还有本进程管理的运行（子进程仍在写事件流、结束后仍会写状态）时不释放锁；
+    // 这些运行的监听器会让进程存活到最后一个子进程结束，再由 exit 钩子释放。
+    if (runner.localRunCount() === 0) lock.release();
   }
 }
 
@@ -186,9 +200,14 @@ async function runResolveCommand(options, config, stdout, deps) {
   const store = new StateStore(config.runtime.stateDir);
   store.load();
   const lock = acquireInstanceLock(config.runtime.stateDir, deps);
+  // 只要本进程还可能写状态，锁就必须留着：子进程仍在运行时提前释放会让第二个 Runner 同时写 state.json。
+  process.once('exit', () => lock.release());
   try {
     if (options.command === 'resolve-run') {
       return resolveRun(options, store, stdout);
+    }
+    if (options.command === 'resolve-binding') {
+      return resolveBinding(options, config, store, stdout);
     }
     return resolveSession(options, store, stdout);
   } finally {
@@ -239,12 +258,57 @@ async function resolveSession(options, store, stdout) {
       issue.binding.sessionId = sessionId;
       issue.binding.sessionUnresolved = false;
     } else {
+      // 确认没有可续接的 session：清掉旧标识与不明确标记，下一次触发按 START 新建。
+      issue.binding.sessionId = null;
       issue.binding.sessionUnresolved = false;
     }
+    issue.binding.resolvedAt = new Date().toISOString();
   });
   stdout.write(
-    `已更新 ${repo}#${issueNumber} 绑定: ${sessionId === null ? '确认无遗留会话' : `session=${sessionId}`}\n`,
+    `已更新 ${repo}#${issueNumber} 绑定: ${sessionId === null ? '确认无可续接 session（下次按 START）' : `session=${sessionId}`}\n`,
   );
+  return 0;
+}
+
+/**
+ * 维护者明确把绑定迁移到本机 Runner（换机 / 换 runnerName）。
+ * 目录与分支按本机配置重新派生，原 session 不再续接，避免在另一台机器的路径与会话上静默继续。
+ */
+async function resolveBinding(options, config, store, stdout) {
+  const repo = options.flags.repo;
+  const issueNumber = Number(options.flags.issue);
+  if (repo === undefined || !Number.isInteger(issueNumber)) {
+    throw new ConfigError('resolve-binding 需要 --repo <owner/name> 与 --issue <n>');
+  }
+  if (options.flags.takeOwnership !== true) {
+    throw new ConfigError('resolve-binding 需要显式 --take-ownership（换 Runner 必须由维护者明确迁移）');
+  }
+  const repository = config.repositories.find((entry) => entry.repo === repo);
+  if (repository === undefined) {
+    throw new ConfigError(`${repo} 不在当前 REPOSITORIES_JSON 中`);
+  }
+  await store.update((draft) => {
+    const issue = issueState(draft, repo, issueNumber);
+    if (issue.binding === null) throw new ConfigError(`${repo}#${issueNumber} 没有任务绑定`);
+    const active = Object.values(draft.activeRuns).find(
+      (run) => run.repository === repo && run.issueNumber === issueNumber && ['starting', 'running', 'unknown'].includes(run.status),
+    );
+    if (active !== undefined) {
+      throw new ConfigError(`${repo}#${issueNumber} 仍有占槽的运行 ${active.runId}；先 resolve-run 处理它`);
+    }
+    const now = new Date().toISOString();
+    issue.binding = {
+      runnerName: config.runnerName,
+      dir: taskDirFor(repository, issueNumber),
+      sessionId: null,
+      branch: branchFor(issueNumber),
+      source: repository.sourceDir,
+      worktreeCreated: false,
+      createdAt: issue.binding.createdAt ?? now,
+      migratedAt: now,
+    };
+  });
+  stdout.write(`已把 ${repo}#${issueNumber} 的绑定迁移给 ${config.runnerName}；下一次触发按 START 建立新 session\n`);
   return 0;
 }
 

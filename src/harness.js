@@ -17,6 +17,7 @@
 import { execFile, spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 
 /** 允许继承给 Harness 子进程的最小系统环境；凭据类变量只能通过显式 allowlist 透传。 */
 const SYSTEM_ENV_KEYS = [
@@ -84,6 +85,52 @@ export function harnessInvocation(config, sessionId) {
     return { command: process.execPath, args: [config.harness.bin, ...args] };
   }
   return { command: config.harness.bin, args };
+}
+
+/**
+ * 按偏移增量读取一个持续增长的文件，并保留被切断的多字节字符。
+ * 事件流由子进程直接写入文件，父进程只能按当前长度分批读取；每批独立解码会把
+ * 中文等多字节字符切成替换字符，因此这里用 StringDecoder 保留未完成的字节。
+ * @param {string} file
+ * @param {{onError?: (error: Error) => void}} [options]
+ */
+export function createFileTail(file, options = {}) {
+  let offset = 0;
+  const decoder = new StringDecoder('utf8');
+  const onError = options.onError ?? (() => {});
+  return {
+    /** @returns {string} 本次新增的已解码文本 */
+    read() {
+      let size;
+      try {
+        size = fs.statSync(file).size;
+      } catch {
+        return '';
+      }
+      if (size <= offset) return '';
+      const length = size - offset;
+      const buffer = Buffer.alloc(length);
+      let fd = null;
+      try {
+        fd = fs.openSync(file, 'r');
+        const bytes = fs.readSync(fd, buffer, 0, length, offset);
+        offset += bytes;
+        return decoder.write(buffer.subarray(0, bytes));
+      } catch (error) {
+        onError(error);
+        return '';
+      } finally {
+        if (fd !== null) safeClose(fd);
+      }
+    },
+    /** 读出解码器中残留的最后一个不完整字符。 */
+    flush() {
+      return decoder.end();
+    },
+    get offset() {
+      return offset;
+    },
+  };
 }
 
 /** 逐行拆分的读取器；跨 chunk 的半行不会当成事件。 */
@@ -238,7 +285,9 @@ export function createHarnessRunner(options) {
         if (errFd !== null) safeClose(errFd);
       }
 
-      let offset = 0;
+      const tail = createFileTail(stdoutPath, {
+        onError: (error) => logger.warn(`读取事件流失败: ${error.code ?? error.message}`),
+      });
       let tailTimer = null;
       let timedOut = false;
       let killTimer = null;
@@ -250,26 +299,7 @@ export function createHarnessRunner(options) {
       });
 
       const readNewBytes = () => {
-        let size;
-        try {
-          size = fs.statSync(stdoutPath).size;
-        } catch {
-          return;
-        }
-        if (size <= offset) return;
-        const length = size - offset;
-        const buffer = Buffer.alloc(length);
-        let fd = null;
-        try {
-          fd = fs.openSync(stdoutPath, 'r');
-          const bytes = fs.readSync(fd, buffer, 0, length, offset);
-          offset += bytes;
-          reader.push(buffer.subarray(0, bytes).toString('utf8'));
-        } catch (error) {
-          logger.warn(`读取事件流失败: ${error.code ?? error.message}`);
-        } finally {
-          if (fd !== null) safeClose(fd);
-        }
+        reader.push(tail.read());
       };
 
       const finish = (result) => {
@@ -279,6 +309,7 @@ export function createHarnessRunner(options) {
         if (killTimer !== null) clearTimeout(killTimer);
         if (hardKillTimer !== null) clearTimeout(hardKillTimer);
         readNewBytes();
+        reader.push(tail.flush());
         reader.flush();
         if (!settledSession) {
           settledSession = true;

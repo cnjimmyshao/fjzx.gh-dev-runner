@@ -1127,6 +1127,213 @@ test('重启恢复：只有 sessionId 而没有已提交助手内容时按未进
   }
 });
 
+test('Body 不是命令时同一轮继续扫描窗口内已有的控制评论', async () => {
+  const ctx = await setup({
+    script: {
+      listIssuesSince: () => ({ items: [makeIssue({ number: 7, body: '只是描述，没有命令', comments: 1 })], truncated: false }),
+      listComments: () => ({ items: [makeComment({ id: 80, body: '请开始处理。\n\n@MB01' })], truncated: false }),
+    },
+  });
+  try {
+    await seedRepository(ctx.store);
+    await ctx.runner.runCycle();
+    await waitForIdle(ctx.runner);
+
+    const record = issueRecord(ctx.store, 7);
+    assert.equal(record.issueBodyHandled, true);
+    assert.equal(record.lastTrigger.sourceType, 'comment');
+    assert.equal(record.lastTrigger.sourceId, '80');
+    assert.equal(ctx.harness.launches.length, 1);
+  } finally {
+    cleanup(ctx.stateDir);
+  }
+});
+
+test('进程启动过但从未出现 session 事件时标记绑定不明确，后续触发不静默新建会话', async () => {
+  const ctx = await setup({
+    script: {
+      listIssuesSince: () => ({ items: [makeIssue({ number: 7, body: '@MB01' })], truncated: false }),
+    },
+    plan: {
+      entered: false,
+      result: { exitCode: 1, sessionId: null, turnEndReason: null, hadAssistantCommit: false, eventCount: 0 },
+    },
+  });
+  try {
+    await seedRepository(ctx.store);
+    await ctx.runner.runCycle();
+    await waitForIdle(ctx.runner);
+    assert.equal(issueRecord(ctx.store, 7).binding.sessionUnresolved, true);
+    assert.equal(issueRecord(ctx.store, 7).binding.sessionId, null);
+
+    // 后续触发被拒绝，而不是静默新建第二个 session
+    ctx.harness.launches.length = 0;
+    ctx.github.calls.length = 0;
+    await seedIssue(ctx.store, 7, { issueBodyHandled: true, commentScanWatermark: '10', commentScanWatermarkAt: '2026-09-30T00:00:00.000Z' });
+    ctx.github.listComments = async () => ({ items: [makeComment({ id: 90, body: '继续 @MB01' })], truncated: false });
+    await ctx.runner.runCycle();
+    assert.equal(ctx.harness.launches.length, 0);
+    assert.equal(ctx.github.countOf('postComment') >= 1, true);
+  } finally {
+    cleanup(ctx.stateDir);
+  }
+});
+
+test('RESUME 复用同一 sessionId 时仍为本次触发发布接单确认', async () => {
+  const ctx = await setup({
+    script: {
+      listIssuesSince: () => ({ items: [makeIssue({ number: 7 })], truncated: false }),
+      listComments: () => ({ items: [makeComment({ id: 100, body: '继续 @MB01' })], truncated: false }),
+      listRecentComments: () => [
+        makeComment({
+          id: 901,
+          body: 'BOT:MB01\nMB01 已接单，Session ID: session-old',
+          user: { login: 'MB01' },
+          created_at: '2026-09-29T00:00:00Z',
+        }),
+      ],
+    },
+  });
+  try {
+    await seedRepository(ctx.store);
+    await seedIssue(ctx.store, 7, {
+      issueBodyHandled: true,
+      commentScanWatermark: '10',
+      commentScanWatermarkAt: '2026-09-30T00:00:00.000Z',
+      binding: {
+        runnerName: 'MB01',
+        dir: `${ctx.config.repositories[0].worktreeDir}/issue-7`,
+        sessionId: 'session-old',
+        branch: 'fjzx/issue-7',
+        source: ctx.config.repositories[0].sourceDir,
+        worktreeCreated: true,
+        createdAt: '2026-09-29T00:00:00.000Z',
+      },
+    });
+
+    await ctx.runner.runCycle();
+    await waitForIdle(ctx.runner);
+    const bodies = postedBodies(ctx.github);
+    assert.equal(bodies.length, 1, '本次 RESUME 需要自己的接单确认');
+    assert.match(bodies[0], /Session ID: session-old/);
+  } finally {
+    cleanup(ctx.stateDir);
+  }
+});
+
+test('会话不匹配时不发布接单确认，也不改写绑定', async () => {
+  const ctx = await setup({
+    script: {
+      listIssuesSince: () => ({ items: [makeIssue({ number: 7 })], truncated: false }),
+      listComments: () => ({ items: [makeComment({ id: 101, body: '继续 @MB01' })], truncated: false }),
+    },
+    plan: {
+      entered: true,
+      result: {
+        exitCode: 1,
+        sessionId: 'session-wrong',
+        sessionMismatch: true,
+        turnEndReason: null,
+        hadAssistantCommit: true,
+      },
+    },
+  });
+  try {
+    await seedRepository(ctx.store);
+    await seedIssue(ctx.store, 7, {
+      issueBodyHandled: true,
+      commentScanWatermark: '10',
+      commentScanWatermarkAt: '2026-09-30T00:00:00.000Z',
+      binding: {
+        runnerName: 'MB01',
+        dir: `${ctx.config.repositories[0].worktreeDir}/issue-7`,
+        sessionId: 'session-wanted',
+        branch: 'fjzx/issue-7',
+        source: ctx.config.repositories[0].sourceDir,
+        worktreeCreated: true,
+        createdAt: '2026-09-29T00:00:00.000Z',
+      },
+    });
+
+    await ctx.runner.runCycle();
+    await waitForIdle(ctx.runner);
+    const run = Object.values(ctx.store.read().activeRuns).at(-1);
+    assert.equal(run.outcome, 'session_mismatch');
+    assert.equal(run.sessionId, 'session-wanted', '不采信返回的另一个会话标识');
+    assert.equal(issueRecord(ctx.store, 7).binding.sessionId, 'session-wanted');
+    const bodies = postedBodies(ctx.github);
+    assert.equal(bodies.length, 1);
+    assert.doesNotMatch(bodies[0], /已接单|session-wrong/);
+  } finally {
+    cleanup(ctx.stateDir);
+  }
+});
+
+test('已结束但反馈未发出的运行会在后续轮询补发', async () => {
+  const ctx = await setup();
+  try {
+    await seedRepository(ctx.store);
+    await seedIssue(ctx.store, 7, { issueBodyHandled: true });
+    await ctx.store.update((draft) => {
+      draft.activeRuns['run-pending'] = {
+        runId: 'run-pending',
+        repository: 'owner/repo',
+        issueNumber: 7,
+        status: 'exited',
+        outcome: 'turn_completed',
+        sessionId: 'session-pending',
+        startedAt: '2026-09-30T00:00:00.000Z',
+        endedAt: '2026-09-30T00:00:10.000Z',
+        trigger: { sourceType: 'comment', sourceId: '150', at: '2026-09-30T00:00:00.000Z' },
+        feedback: { success: false, failure: false },
+        feedbackExpectation: 'success',
+      };
+    });
+
+    await ctx.runner.runCycle();
+    assert.equal(ctx.github.countOf('postComment'), 1);
+    assert.match(postedBodies(ctx.github)[0], /Session ID: session-pending/);
+    assert.equal(ctx.store.read().activeRuns['run-pending'].feedback.success, true);
+  } finally {
+    cleanup(ctx.stateDir);
+  }
+});
+
+test('绑定属于另一台 Runner 时拒绝静默接管', async () => {
+  const ctx = await setup({
+    script: {
+      listIssuesSince: () => ({ items: [makeIssue({ number: 7 })], truncated: false }),
+      listComments: () => ({ items: [makeComment({ id: 110, body: '继续 @MB01' })], truncated: false }),
+    },
+  });
+  try {
+    await seedRepository(ctx.store);
+    await seedIssue(ctx.store, 7, {
+      issueBodyHandled: true,
+      commentScanWatermark: '10',
+      commentScanWatermarkAt: '2026-09-30T00:00:00.000Z',
+      binding: {
+        runnerName: 'HZ01',
+        dir: '/somewhere/issue-7',
+        sessionId: 'session-hz',
+        branch: 'fjzx/issue-7',
+        source: '/somewhere',
+        worktreeCreated: true,
+        createdAt: '2026-09-29T00:00:00.000Z',
+      },
+    });
+
+    await ctx.runner.runCycle();
+    assert.equal(ctx.harness.launches.length, 0);
+    assert.equal(issueRecord(ctx.store, 7).binding.runnerName, 'HZ01', '不覆盖原绑定');
+    const bodies = postedBodies(ctx.github);
+    assert.equal(bodies.length, 1);
+    assert.match(bodies[0], /另一台 Runner/);
+  } finally {
+    cleanup(ctx.stateDir);
+  }
+});
+
 function machineActive(store) {
   return Object.values(store.read().activeRuns).filter((run) =>
     ['starting', 'running', 'unknown'].includes(run.status),

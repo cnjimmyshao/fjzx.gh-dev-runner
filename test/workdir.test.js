@@ -106,6 +106,52 @@ test('RESUME 必须回到原目录：目录不存在时明确失败', { skip: gi
   }
 });
 
+test('RESUME 前确认目录仍是配置源仓库的 worktree', { skip: gitBin === null && '本机没有可用的 git' }, async () => {
+  const root = tempDir('fjzx-wt-');
+  const sourceDir = createSourceRepo();
+  const otherSource = createSourceRepo();
+  try {
+    const repository = {
+      repo: 'owner/repo',
+      allowedActors: ['alice'],
+      sourceDir,
+      baseBranch: 'main',
+      worktreeDir: root,
+      maxConcurrentHarnesses: 1,
+    };
+    const manager = createWorkdirManager({ gitBin });
+    const prepared = await manager.prepare({ repository, issueNumber: 3, kind: 'start', binding: null });
+
+    // 同一目录声称属于另一个源仓库时明确失败
+    await assert.rejects(
+      manager.prepare({
+        repository: { ...repository, sourceDir: otherSource },
+        issueNumber: 3,
+        kind: 'resume',
+        binding: { dir: prepared.dir, source: otherSource, branch: 'fjzx/issue-3' },
+      }),
+      (error) => error instanceof WorkdirError && error.category === 'worktree_source_mismatch',
+    );
+
+    // 目录被替换成普通目录时同样失败
+    fs.rmSync(prepared.dir, { recursive: true, force: true });
+    fs.mkdirSync(prepared.dir, { recursive: true });
+    await assert.rejects(
+      manager.prepare({
+        repository,
+        issueNumber: 3,
+        kind: 'resume',
+        binding: { dir: prepared.dir, source: sourceDir, branch: 'fjzx/issue-3' },
+      }),
+      (error) => error instanceof WorkdirError && ['task_dir_not_worktree', 'worktree_source_mismatch'].includes(error.category),
+    );
+  } finally {
+    cleanup(root);
+    cleanup(sourceDir);
+    cleanup(otherSource);
+  }
+});
+
 test('绑定与当前配置不一致时停止并报告，不静默换目录', { skip: gitBin === null && '本机没有可用的 git' }, async () => {
   const root = tempDir('fjzx-wt-');
   const sourceDir = createSourceRepo();

@@ -46,6 +46,21 @@ test('状态写入是原子替换，重新加载得到同一内容', async () =>
   }
 });
 
+test('state.json 以 0600 创建（含私有仓库身份与本机路径）', async () => {
+  const dir = tempDir();
+  try {
+    const store = new StateStore(dir);
+    store.load();
+    await store.update((draft) => {
+      issueState(draft, 'owner/private-repo', 1).issueBodyHandled = true;
+    });
+    const mode = fs.statSync(path.join(dir, 'state.json')).mode & 0o777;
+    assert.equal(mode, 0o600);
+  } finally {
+    cleanup(dir);
+  }
+});
+
 test('状态损坏、为空或版本不支持时拒绝覆盖', () => {
   const dir = tempDir();
   try {

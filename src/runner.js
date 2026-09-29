@@ -34,7 +34,10 @@ import {
   scanEndpoint,
 } from './trigger.js';
 
-/** 公开失败反馈只使用这些稳定标签，不转述原始 stderr、模型输出或本机路径。 */const FAILURE_LABELS = Object.freeze({
+/** 公开失败反馈只使用这些稳定标签，不转述原始 stderr、模型输出或本机路径。 *//** 同一轮未发出的控制反馈最多补发几次，避免永久性故障下无限重试。 */
+const FEEDBACK_MAX_ATTEMPTS = 5;
+
+const FAILURE_LABELS = Object.freeze({
   [HARNESS_FAILURE.spawnFailed]: 'Harness 进程未能启动',
   [HARNESS_FAILURE.timeout]: '本机调用超时',
   [HARNESS_FAILURE.sessionBusy]: 'Harness 会话已被其他写入者占用',
@@ -50,6 +53,8 @@ import {
   base_branch_missing: '起点分支不存在',
   worktree_add_failed: '创建任务 worktree 失败',
   session_unresolved: '本机存在未确认的遗留会话',
+  binding_owner_mismatch: '任务绑定属于另一台 Runner',
+  worktree_source_mismatch: '任务工作目录不属于配置的源仓库',
 });
 
 /**
@@ -78,6 +83,50 @@ export function createRunner(deps) {
    * 启动时与每轮开始时核对活跃运行态：确认仍在运行的继续占槽，确认已退出的结算并释放，
    * 无法确认的保守标记 unknown 并继续占槽（等待探测结果或维护者恢复动作）。
    */
+  /**
+   * 补发已经结束、但控制反馈尚未确认发出的运行。GitHub 临时故障不应永久丢掉 Contract 要求的接单 / 失败回复。
+   */
+  async function retryPendingFeedback() {
+    const pending = Object.values(store.read().activeRuns).filter(
+      (run) =>
+        !localRuns.has(run.runId)
+        && run.status === 'exited'
+        && typeof run.feedbackExpectation === 'string'
+        && run.feedback?.[run.feedbackExpectation] !== true
+        && (run.feedbackAttempts ?? 0) < FEEDBACK_MAX_ATTEMPTS,
+    );
+    for (const run of pending) {
+      await store.update((draft) => {
+        const record = draft.activeRuns[run.runId];
+        if (record) record.feedbackAttempts = (record.feedbackAttempts ?? 0) + 1;
+      });
+      if (run.feedbackExpectation === 'success' && run.sessionId) {
+        await ensureSuccessFeedback(run, run.sessionId);
+      } else {
+        await ensureFailureFeedback(run, run.outcome ?? 'harness_error');
+      }
+    }
+    for (const run of Object.values(store.read().activeRuns)) {
+      if (run.status !== 'exited' || run.feedbackAbandoned === true) continue;
+      if (typeof run.feedbackExpectation !== 'string') continue;
+      if (run.feedback?.[run.feedbackExpectation] === true) continue;
+      if ((run.feedbackAttempts ?? 0) < FEEDBACK_MAX_ATTEMPTS) continue;
+      await store.update((draft) => {
+        const record = draft.activeRuns[run.runId];
+        if (record) record.feedbackAbandoned = true;
+      });
+      audit.append({
+        event: 'feedback_abandoned',
+        runId: run.runId,
+        repository: run.repository,
+        issueNumber: run.issueNumber,
+        kind: run.feedbackExpectation,
+        attempts: run.feedbackAttempts ?? 0,
+      });
+      logger.warn(`运行 ${run.runId} 的控制反馈补发 ${FEEDBACK_MAX_ATTEMPTS} 次仍未成功，转人工核对`);
+    }
+  }
+
   async function recoverActiveRuns() {
     const active = Object.values(store.read().activeRuns).filter((run) => !localRuns.has(run.runId));
     for (const run of active) {
@@ -115,6 +164,10 @@ export function createRunner(deps) {
     const capture = harness.readCapture(run.runDir);
     harness.finalizeCapture?.(run.runDir);
     const sessionId = run.sessionId ?? capture.sessionId ?? null;
+    // 与正常结算使用同一判据：只有 sessionId 而没有已提交助手内容，不算“进入可工作 session”。
+    const enteredWorkableSession = sessionId !== null
+      && (capture.hadAssistantCommit || capture.turnEndReason === 'completed');
+    const feedbackExpectation = enteredWorkableSession ? 'success' : 'failure';
     const outcome = capture.turnEndReason === 'completed'
       ? 'orphan_completed'
       : sessionId === null
@@ -142,6 +195,8 @@ export function createRunner(deps) {
       if (issue.lastTrigger && issue.lastTrigger.sourceId === run.trigger?.sourceId) {
         issue.lastTrigger.status = outcome;
       }
+      const recoveredRecord = draft.activeRuns[run.runId];
+      if (recoveredRecord) recoveredRecord.feedbackExpectation = feedbackExpectation;
     });
 
     audit.append({
@@ -155,9 +210,6 @@ export function createRunner(deps) {
       pid: run.pid,
     });
 
-    // 与正常结算使用同一判据：只有 sessionId 而没有已提交助手内容，不算“进入可工作 session”。
-    const enteredWorkableSession = sessionId !== null
-      && (capture.hadAssistantCommit || capture.turnEndReason === 'completed');
     if (enteredWorkableSession) {
       await ensureSuccessFeedback(run, sessionId);
     } else if (!capture.exists) {
@@ -173,6 +225,7 @@ export function createRunner(deps) {
   async function runCycle() {
     const summary = { claimed: null, scanned: [], errors: [] };
     await recoverActiveRuns();
+    await retryPendingFeedback();
     await store.update((draft) => {
       pruneEndedRuns(draft, clock().getTime());
     });
@@ -352,7 +405,8 @@ export function createRunner(deps) {
         author: decision.author,
         reason: decision.reason,
       });
-      return { handled: true };
+      // 同一轮继续按正常增量路径扫描该 Issue 的评论：Body 不是命令不代表可以漏掉窗口内已有的控制评论。
+      return scanIssueComments(repository, issue);
     }
 
     return claim({
@@ -474,6 +528,18 @@ export function createRunner(deps) {
     const snapshot = store.read().repositories[repo]?.issues?.[String(issue.number)] ?? null;
     const existingBinding = snapshot?.binding ?? null;
     const kind = existingBinding?.sessionId ? 'resume' : 'start';
+
+    if (existingBinding?.runnerName && existingBinding.runnerName !== config.runnerName) {
+      audit.append({
+        event: 'claim_refused',
+        repository: repo,
+        issueNumber: issue.number,
+        reason: 'binding_owner_mismatch',
+        bindingRunner: existingBinding.runnerName,
+      });
+      await sendRefusalFeedback(repository, issue, 'binding_owner_mismatch');
+      return { refused: 'binding_owner_mismatch' };
+    }
 
     if (kind === 'start' && existingBinding?.sessionUnresolved === true) {
       audit.append({
@@ -617,6 +683,11 @@ export function createRunner(deps) {
         return;
       }
 
+      if (prepared.currentBranch !== null && prepared.branch !== prepared.currentBranch) {
+        logger.warn(
+          `${run.repository}#${run.issueNumber} 工作目录当前在 ${prepared.currentBranch}，绑定记录为 ${prepared.branch}；按现有检出继续`,
+        );
+      }
       await store.update((draft) => {
         const record = draft.activeRuns[run.runId];
         if (record) record.dir = prepared.dir;
@@ -672,7 +743,7 @@ export function createRunner(deps) {
 
       // 早期判据：模型产出第一个已提交的助手内容，说明本轮确实进入了可工作 session。
       void handle.earlySignal.then(async (entered) => {
-        if (!entered) return;
+        if (!entered || handle.record.sessionMismatch) return;
         const sessionId = (await handle.sessionId) ?? run.sessionId ?? null;
         if (!sessionId) return;
         await ensureSuccessFeedback(run, sessionId);
@@ -689,9 +760,15 @@ export function createRunner(deps) {
   async function finishRun(run, result) {
     const verdict = classifyHarnessResult(result);
     harness.finalizeCapture?.(result.runDir);
-    const sessionId = result.sessionId ?? run.sessionId ?? null;
-    const capture = harness.readCapture(result.runDir);
-    const ambiguousSession = sessionId === null && result.spawnError === null && !capture.exists;
+    // 会话不匹配时绝不采信返回的另一个 session 标识，也不改写绑定。
+    const sessionId = result.sessionMismatch ? run.sessionId ?? null : result.sessionId ?? run.sessionId ?? null;
+    // 进程确实启动过、却始终没有 session 事件：无法排除“会话已建立但标识没拿到”，按绑定不明确处理。
+    const ambiguousSession = sessionId === null && result.spawnError === null;
+    // 接单确认要求“已进入可工作 session”：既要有绑定的 sessionId，也要有本轮确实产生过
+    // 已提交助手内容的证据；只有标识而没有可工作轮次时按启动失败处理（03-runner-trigger.md）。
+    const enteredWorkableSession = !result.sessionMismatch
+      && sessionId !== null
+      && (Boolean(result.hadAssistantCommit) || verdict.ok);
 
     await store.update((draft) => {
       const record = draft.activeRuns[run.runId];
@@ -711,7 +788,9 @@ export function createRunner(deps) {
         };
       }
       const issue = issueState(draft, run.repository, run.issueNumber);
-      if (issue.binding && !issue.binding.sessionId && sessionId) issue.binding.sessionId = sessionId;
+      if (issue.binding && !issue.binding.sessionId && sessionId && !result.sessionMismatch) {
+        issue.binding.sessionId = sessionId;
+      }
       if (issue.binding && ambiguousSession) issue.binding.sessionUnresolved = true;
       if (issue.lastRun) {
         issue.lastRun.exitCode = result.exitCode;
@@ -722,6 +801,7 @@ export function createRunner(deps) {
         issue.lastTrigger.status = record?.outcome ?? null;
         issue.lastTrigger.finishedAt = record?.endedAt ?? nowIso();
       }
+      if (record) record.feedbackExpectation = enteredWorkableSession ? 'success' : 'failure';
     });
 
     audit.append({
@@ -742,9 +822,6 @@ export function createRunner(deps) {
     });
 
     const feedback = store.read().activeRuns[run.runId]?.feedback ?? { success: false, failure: false };
-    // 接单确认要求“已进入可工作 session”：既要有绑定的 sessionId，也要有本轮确实产生过
-    // 已提交助手内容的证据；只有标识而没有可工作轮次时按启动失败处理（03-runner-trigger.md）。
-    const enteredWorkableSession = sessionId !== null && (Boolean(result.hadAssistantCommit) || verdict.ok);
     if (enteredWorkableSession) {
       if (!feedback.success) await ensureSuccessFeedback(run, sessionId);
     } else {
@@ -771,6 +848,7 @@ export function createRunner(deps) {
       if (issue.lastTrigger && issue.lastTrigger.sourceId === run.trigger.sourceId) {
         issue.lastTrigger.status = category;
       }
+      if (record) record.feedbackExpectation = 'failure';
     });
     audit.append({
       event: 'run_failed',
@@ -826,11 +904,14 @@ export function createRunner(deps) {
     if (record?.feedback?.success) return true;
     try {
       const existing = await github.listRecentComments(run.repository, run.issueNumber, { pageSize: 100 });
+      const triggerAt = Date.parse(run.trigger?.at ?? '') || 0;
+      // RESUME 复用同一个 sessionId，因此必须同时用本次触发时间区分，否则会把上一条 START 的确认当成自己的。
       const found = existing.some(
         (comment) =>
           isBotFeedback(comment.body) &&
           String(comment.body).trimStart().startsWith(`BOT:${config.runnerName}`) &&
-          String(comment.body).includes(sessionId),
+          String(comment.body).includes(sessionId) &&
+          (Date.parse(comment.created_at ?? '') || 0) >= triggerAt,
       );
       if (!found) {
         await github.postComment(run.repository, run.issueNumber, successBody(sessionId));

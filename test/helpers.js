@@ -127,7 +127,8 @@ export function createFakeHarness(plan = {}) {
         signal: null,
         timedOut: false,
         spawnError: null,
-        sessionId: 'session-1',
+        // 真实 CLI 在 RESUME 时会回显被采纳的会话标识；替身按同样语义返回。
+        sessionId: input.sessionId ?? 'session-1',
         sessionMismatch: false,
         turnEndReason: 'completed',
         hadAssistantCommit: true,

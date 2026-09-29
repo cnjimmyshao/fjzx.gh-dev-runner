@@ -7,6 +7,7 @@ import {
   HARNESS_FAILURE,
   buildHarnessEnv,
   classifyHarnessResult,
+  createFileTail,
   createHarnessRunner,
   createLineReader,
   harnessInvocation,
@@ -43,6 +44,16 @@ if (mode === 'refused') {
   process.exit(1);
 }
 if (mode === 'silent-ok') process.exit(0);
+if (mode === 'split-utf8') {
+  emit({ type: 'session', sessionId: 'session-utf8', cwd: process.cwd() });
+  const payload = Buffer.from(JSON.stringify({ type: 'text', text: '中文内容' }) + '\\n', 'utf8');
+  const cut = payload.indexOf(Buffer.from('中', 'utf8')) + 1;
+  process.stdout.write(payload.subarray(0, cut));
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  process.stdout.write(payload.subarray(cut));
+  emit({ type: 'status', phase: 'turn_end', turn: 1, reason: 'completed' });
+  process.exit(0);
+}
 if (mode === 'slow') {
   emit({ type: 'session', sessionId: 'session-slow', cwd: process.cwd() });
   await new Promise((resolve) => setTimeout(resolve, 30_000));
@@ -175,6 +186,43 @@ test('capture=full 时保留完整事件流与 stderr 文件', async () => {
     const capture = fs.readFileSync(path.join(config.runtime.stateDir, 'runs', 'run-full', 'stdout.jsonl'), 'utf8');
     assert.match(capture, /ANSWER-TEXT/);
     assert.ok(fs.existsSync(path.join(config.runtime.stateDir, 'runs', 'run-full', 'stderr.log')));
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('createFileTail 保留被切断的多字节字符', () => {
+  const dir = tempDir('fjzx-tail-');
+  try {
+    const file = path.join(dir, 'stream.jsonl');
+    const payload = Buffer.from(`${JSON.stringify({ type: 'text', text: '中文内容' })}\n`, 'utf8');
+    const cut = payload.indexOf(Buffer.from('中', 'utf8')) + 1;
+    fs.writeFileSync(file, payload.subarray(0, cut));
+    const tail = createFileTail(file);
+    const first = tail.read();
+    assert.equal(first.includes('\uFFFD'), false, '不完整字符不得立即解码成替换字符');
+    fs.appendFileSync(file, payload.subarray(cut));
+    const text = `${first}${tail.read()}${tail.flush()}`;
+    assert.deepEqual(JSON.parse(text.trim()), { type: 'text', text: '中文内容' });
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('分批写入的事件流仍能被完整判读', async () => {
+  const { dir, config } = makeHarnessConfig();
+  try {
+    const fake = writeFakeHarness(dir, 'split-utf8');
+    config.harness.bin = fake.file;
+    const runner = createHarnessRunner({ config, logger: silent, tailIntervalMs: 20 });
+    const workdir = path.join(dir, 'work');
+    fs.mkdirSync(workdir);
+    const handle = runner.launch({ runId: 'run-utf8', kind: 'start', dir: workdir, sessionId: null, task: 'x' });
+    const result = await handle.exited;
+    assert.equal(result.invalidLines, 0, '不应产生无法解析的半截行');
+    assert.equal(result.hadAssistantCommit, true);
+    assert.equal(result.sessionId, 'session-utf8');
+    assert.deepEqual(classifyHarnessResult(result), { ok: true, category: null });
   } finally {
     cleanup(dir);
   }

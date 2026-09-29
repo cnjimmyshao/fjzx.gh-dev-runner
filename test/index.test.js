@@ -98,7 +98,9 @@ test('resolve-session 记录人工核对的 sessionId 或确认无遗留会话',
     });
     const again = new StateStore(stateDir);
     again.load();
-    assert.equal(again.read().repositories['owner/repo'].issues['7'].binding.sessionUnresolved, false);
+    const after = again.read().repositories['owner/repo'].issues['7'].binding;
+    assert.equal(after.sessionUnresolved, false);
+    assert.equal(after.sessionId, null, '--no-session 同时清除旧标识，下一次触发按 START');
   } finally {
     cleanup(root);
   }
@@ -140,6 +142,54 @@ test('resolve-run 释放或维持一个结果不确定的运行', async () => {
       main(['--env', envFile, 'resolve-run', '--run', 'nope', '--outcome', 'exited'], { stdout: silentStdout() }),
       /未知 runId/,
     );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('resolve-binding --take-ownership 由维护者显式迁移绑定', async () => {
+  const root = tempDir('fjzx-index-');
+  try {
+    const { envFile, stateDir, sourceDir } = writeEnv(root);
+    const store = new StateStore(stateDir);
+    store.load();
+    await store.update((draft) => {
+      draft.repositories['owner/repo'] = {
+        baselineCompleted: true,
+        issues: {
+          7: {
+            issueBodyHandled: true,
+            binding: {
+              runnerName: 'HZ01',
+              dir: '/elsewhere/issue-7',
+              sessionId: 'session-hz',
+              branch: 'fjzx/issue-7',
+              source: '/elsewhere',
+              worktreeCreated: true,
+              createdAt: '2026-09-29T00:00:00.000Z',
+            },
+          },
+        },
+      };
+    });
+
+    await assert.rejects(
+      main(['--env', envFile, 'resolve-binding', '--repo', 'owner/repo', '--issue', '7'], { stdout: silentStdout() }),
+      /take-ownership/,
+    );
+
+    const code = await main(
+      ['--env', envFile, 'resolve-binding', '--repo', 'owner/repo', '--issue', '7', '--take-ownership'],
+      { stdout: silentStdout() },
+    );
+    assert.equal(code, 0);
+    const reloaded = new StateStore(stateDir);
+    reloaded.load();
+    const binding = reloaded.read().repositories['owner/repo'].issues['7'].binding;
+    assert.equal(binding.runnerName, 'MB01');
+    assert.equal(binding.sessionId, null, '迁移后不续接原机器的会话');
+    assert.equal(binding.source, sourceDir);
+    assert.match(binding.dir, /issue-7$/);
   } finally {
     cleanup(root);
   }
@@ -190,6 +240,72 @@ test('未登录 gh 时拒绝启动', async () => {
       main(['--env', envFile, '--once'], { stdout: silentStdout(), github, harness: createFakeHarness(), workdir: createFakeWorkdir() }),
       /gh auth status 失败/,
     );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('本进程仍有运行在飞时不释放实例锁', async () => {
+  const root = tempDir('fjzx-index-');
+  try {
+    const { envFile, stateDir, sourceDir } = writeEnv(root);
+    let release = null;
+    const exitGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const launches = [];
+    const slowHarness = {
+      ...createFakeHarness(),
+      launch(input) {
+        launches.push(input);
+        return {
+          pid: 4242,
+          record: { sessionMismatch: false },
+          sessionId: Promise.resolve('session-slow'),
+          earlySignal: Promise.resolve(false),
+          exited: exitGate.then(() => ({
+            exitCode: 0,
+            signal: null,
+            timedOut: false,
+            spawnError: null,
+            sessionId: 'session-slow',
+            sessionMismatch: false,
+            turnEndReason: 'completed',
+            hadAssistantCommit: true,
+            hadFinal: true,
+            errorMessage: null,
+            invalidLines: 0,
+            eventCount: 2,
+            runDir: input.runDir,
+          })),
+        };
+      },
+    };
+    const github = createFakeGithub({
+      listIssuesSince: () => ({
+        items: [{ number: 7, body: '@MB01', user: { login: 'alice' }, comments: 0, updated_at: 'x' }],
+        truncated: false,
+      }),
+    });
+
+    const code = await main(['--env', envFile, '--once'], {
+      stdout: silentStdout(),
+      github,
+      harness: slowHarness,
+      workdir: createFakeWorkdir(),
+    });
+    assert.equal(code, 0);
+    assert.equal(launches.length, 1);
+    assert.equal(
+      fs.existsSync(path.join(stateDir, 'runner.lock')),
+      true,
+      '本进程仍需在子进程结束后写状态，锁必须保留',
+    );
+
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(fs.existsSync(path.join(stateDir, 'runner.lock')), true);
+    assert.ok(sourceDir);
   } finally {
     cleanup(root);
   }

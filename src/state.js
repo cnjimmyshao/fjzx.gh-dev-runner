@@ -138,7 +138,8 @@ export class StateStore {
   /** @param {object} draft */
   #write(draft) {
     const tmp = `${this.#file}.tmp-${process.pid}`;
-    const handle = fs.openSync(tmp, 'w');
+    // state.json 含私有仓库身份、本机路径与 session 标识，与 audit / runs / lock 一致用 0600。
+    const handle = fs.openSync(tmp, 'w', 0o600);
     try {
       fs.writeFileSync(handle, `${JSON.stringify(draft, null, 2)}\n`);
       fs.fsyncSync(handle);

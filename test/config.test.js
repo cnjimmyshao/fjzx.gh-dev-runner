@@ -3,7 +3,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { ConfigError, checkEnvironment, loadConfig, parseEnvText, repoSlug } from '../src/config.js';
+import {
+  ConfigError,
+  checkEnvironment,
+  loadConfig,
+  parseEnvText,
+  repoSlug,
+  resolveHarnessBin,
+} from '../src/config.js';
 import { cleanup, tempDir } from './helpers.js';
 
 test('parseEnvText 忽略注释与空行，支持成对引号', () => {
@@ -136,6 +143,42 @@ test('loadConfig 拒绝非法取值', () => {
   assert.throws(() => load({ DSH_BIN: '' }), ConfigError);
 });
 
+test('HARNESS_ENV_ALLOWLIST 不得转发 GitHub 凭据', () => {
+  const dir = tempDir();
+  const base = {
+    RUNNER_NAME: 'MB01',
+    STATE_DIR: path.join(dir, 'state'),
+    DSH_BIN: '/bin/echo',
+    REPOSITORIES_JSON: JSON.stringify([
+      { repo: 'owner/a', allowedActors: ['alice'], sourceDir: dir, worktreeDir: path.join(dir, 'wt') },
+    ]),
+  };
+  const load = (value) =>
+    loadConfig({ env: { ...base, HARNESS_ENV_ALLOWLIST: value }, cwd: dir, envFile: path.join(dir, 'missing.env') });
+  try {
+    assert.throws(() => load('GH_TOKEN'), /不得包含 GH_TOKEN/);
+    assert.throws(() => load('DSH_KEY, GITHUB_TOKEN'), /不得包含 GITHUB_TOKEN/);
+    assert.deepEqual(load('DSH_MODEL_KEY').harness.envAllowlist, ['DSH_MODEL_KEY']);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('DSH_BIN 支持 PATH 命令名与 .js 入口', () => {
+  const dir = tempDir();
+  try {
+    const jsEntry = path.join(dir, 'bin.js');
+    fs.writeFileSync(jsEntry, 'export {};\n');
+    assert.equal(resolveHarnessBin(jsEntry), jsEntry, '.js 入口只要求文件存在');
+    assert.equal(resolveHarnessBin(path.join(dir, 'missing.js')), null);
+    assert.equal(resolveHarnessBin('definitely-not-a-command-xyz'), null);
+    const found = resolveHarnessBin('node');
+    assert.ok(found === null || found.endsWith('node'));
+  } finally {
+    cleanup(dir);
+  }
+});
+
 test('checkEnvironment 要求 Node 24、存在的入口与源仓库目录', () => {
   const dir = tempDir();
   try {
@@ -173,6 +216,21 @@ test('checkEnvironment 要求 Node 24、存在的入口与源仓库目录', () =
       envFile: path.join(dir, 'missing.env'),
     });
     assert.throws(() => checkEnvironment(broken, { nodeVersion: '24.16.0' }), /sourceDir/);
+
+    // DSH_BIN 写成 PATH 命令名时不应被误判为不存在
+    const byPath = loadConfig({
+      env: {
+        RUNNER_NAME: 'MB01',
+        STATE_DIR: path.join(dir, 'state3'),
+        DSH_BIN: 'node',
+        REPOSITORIES_JSON: JSON.stringify([
+          { repo: 'owner/a', allowedActors: ['alice'], sourceDir: dir, worktreeDir: path.join(dir, 'wt3') },
+        ]),
+      },
+      cwd: dir,
+      envFile: path.join(dir, 'missing.env'),
+    });
+    checkEnvironment(byPath, { nodeVersion: '24.16.0' });
   } finally {
     cleanup(dir);
   }
