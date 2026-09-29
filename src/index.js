@@ -294,6 +294,9 @@ async function resolveRun(options, store, stdout) {
   await store.update((draft) => {
     const record = draft.activeRuns[runId];
     if (!record) throw new ConfigError(`未知 runId: ${runId}`);
+    if (outcome === 'running' && (!Number.isInteger(record.pid) || record.pid <= 0)) {
+      throw new ConfigError(`运行 ${runId} 没有可核对的 pid，不能人工标记 running；请保留 unknown 或确认 exited`);
+    }
     record.status = outcome === 'running' ? 'running' : 'exited';
     record.lastObservedAt = new Date().toISOString();
     record.manualResolution = { at: record.lastObservedAt, outcome };
