@@ -387,6 +387,8 @@ export function createHarnessRunner(options) {
       if (result.code !== 0) {
         // 只有明确的“进程不存在”才释放槽位；超时、被杀、权限/系统错误一律 unknown 保守占槽。
         if (result.notFound === true) return 'gone';
+        if (!result.killed && !result.timedOut && result.code === 1
+          && result.stdout.trim() === '' && result.stderr.trim() === '') return 'gone';
         return 'unknown';
       }
       const current = result.stdout.trim();
