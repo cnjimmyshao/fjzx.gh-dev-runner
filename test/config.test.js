@@ -80,6 +80,32 @@ test('loadConfig 保留 repo 与 allowedActors 的对应关系，并拒绝重复
   }
 });
 
+test('loadConfig 拒绝多个仓库共用同一 worktreeDir（会让 issue-<n> 目录碰撞）', () => {
+  const dir = tempDir();
+  try {
+    const shared = path.join(dir, 'wt');
+    assert.throws(
+      () =>
+        loadConfig({
+          env: {
+            RUNNER_NAME: 'MB01',
+            STATE_DIR: path.join(dir, 'state'),
+            DSH_BIN: '/bin/echo',
+            REPOSITORIES_JSON: JSON.stringify([
+              { repo: 'owner/a', allowedActors: ['alice'], sourceDir: dir, worktreeDir: shared },
+              { repo: 'owner/b', allowedActors: ['bob'], sourceDir: dir, worktreeDir: shared },
+            ]),
+          },
+          cwd: dir,
+          envFile: path.join(dir, 'missing.env'),
+        }),
+      /worktreeDir/,
+    );
+  } finally {
+    cleanup(dir);
+  }
+});
+
 test('loadConfig 拒绝非法取值', () => {
   const dir = tempDir();
   const base = {
