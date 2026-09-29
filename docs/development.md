@@ -45,7 +45,7 @@ V1 直接以标准 Node.js 程序运行，不把 Runner 打包成单文件可执
 <DSH_HOME>/...             Harness config / credentials / sessions / state
 ```
 
-真实 `.env` 不入 Git；`.env.example` 不含 GitHub / 模型凭据，也不能把 repository 与 `allowedActors` 拆成失去对应关系的全局列表。Runner 启动前用 `gh auth status` 验证执行账户的本机认证；Harness 复用同一账户可访问的 `gh` 配置，Runner 不向 Harness 注入或转发 `GH_TOKEN` / `GITHUB_TOKEN`。模型 Key 由 Harness 当前版本支持的凭据机制管理。
+V1 Runner 人工部署配置固定从 `.env` 进入；真实 `.env` 不入 Git，`.env.example` 不含 GitHub / 模型凭据，也不能把 repository 与 `allowedActors` 拆成失去对应关系的全局列表。Runner 启动前用 `gh auth status` 验证执行账户的本机认证；Harness 复用同一账户可访问的 `gh` 配置，Runner 不向 Harness 注入或转发 `GH_TOKEN` / `GITHUB_TOKEN`。模型 Key 由 Harness 当前版本支持的凭据机制管理。Runner 不解析、不记录、不持久化模型 Key；仅当实际 Harness 版本要求环境变量凭据时，才把明确 allowlist 中的变量原样透传给子进程。
 
 共享一个 `DSH_HOME` 是首版优先目标，不是当前版本并发安全性的已验证事实。在 [Issue #36](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/36) 完成并发实测前，实际 Runner 并发保持保守，不因目标 Contract 直接开放到大于 1。
 
