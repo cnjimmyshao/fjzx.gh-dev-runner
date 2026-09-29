@@ -36,9 +36,13 @@
  * events (session id, turn end reason, final text) and lease-check results.
  *
  * Exit status: 0 when every scheduled process was spawned (whatever it then
- * did, including being killed); 1 when any process failed to spawn, which is an
- * infrastructure failure rather than a scenario outcome. The report is written
- * in both cases.
+ * did, including being killed); 1 when any process — or any lease-check
+ * interpreter — failed to spawn, which is an infrastructure failure rather than
+ * a scenario outcome. The report is written in both cases.
+ *
+ * A `leaseChecks` entry shells out to `python3` (non-blocking `fcntl.flock`),
+ * the probe's only external dependency beyond the Node runtime and the dsh
+ * installation under test.
  */
 
 import { spawn } from 'node:child_process';
@@ -157,16 +161,30 @@ async function runLeaseCheck(spec) {
   let err = '';
   child.stdout.on('data', (chunk) => (out += chunk));
   child.stderr.on('data', (chunk) => (err += chunk));
-  await new Promise((done) => child.on('exit', (code) => {
-    result.exitCode = code;
-    result.stderr = err.trim() || undefined;
-    try {
-      Object.assign(result, JSON.parse(out.trim()));
-    } catch {
-      result.stdout = out.trim() || undefined;
-    }
-    done();
-  }));
+  await new Promise((done) => {
+    // Same settlement rule as a spawned dsh process: a missing interpreter
+    // emits 'error' and never 'exit'.
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      result.stderr = err.trim() || undefined;
+      try {
+        Object.assign(result, JSON.parse(out.trim()));
+      } catch {
+        result.stdout = out.trim() || undefined;
+      }
+      done();
+    };
+    child.on('exit', (code) => {
+      result.exitCode = code;
+      settle();
+    });
+    child.on('error', (error) => {
+      result.spawnError = { code: error.code, message: error.message };
+      settle();
+    });
+  });
   leaseChecks.push(result);
 }
 
@@ -237,9 +255,16 @@ for (const check of leaseChecks) {
   console.log(`${check.label}: lease acquired=${check.acquired} at=${check.ranAtMs}ms`);
 }
 // A process that never started is an infrastructure failure, not a scenario
-// outcome: keep the report, but exit non-zero so the caller notices.
-const spawnFailures = processes.filter((entry) => entry.spawnError !== undefined);
-for (const entry of spawnFailures) {
-  console.log(`${entry.label}: SPAWN ERROR ${entry.spawnError.code}: ${entry.spawnError.message}`);
+// outcome: keep the report, but exit non-zero so the caller notices. The same
+// applies to a lease check whose interpreter is missing.
+const spawnFailures = [
+  ...processes.filter((entry) => entry.spawnError !== undefined),
+  ...leaseChecks.filter((check) => check.spawnError !== undefined),
+];
+for (const entry of processes) {
+  if (entry.spawnError !== undefined) console.log(`${entry.label}: SPAWN ERROR ${entry.spawnError.code}: ${entry.spawnError.message}`);
+}
+for (const check of leaseChecks) {
+  if (check.spawnError !== undefined) console.log(`${check.label}: LEASE CHECK SPAWN ERROR ${check.spawnError.code}: ${check.spawnError.message}`);
 }
 process.exitCode = spawnFailures.length === 0 ? 0 : 1;
