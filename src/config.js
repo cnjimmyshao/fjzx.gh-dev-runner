@@ -199,14 +199,15 @@ function parseRepositories(value, context) {
     if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
       throw new ConfigError(`${where} 必须是对象`);
     }
-    const repo = entry.repo;
-    if (typeof repo !== 'string' || !/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repo)) {
+    const repoInput = entry.repo;
+    if (typeof repoInput !== 'string' || !/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repoInput)) {
       throw new ConfigError(`${where}.repo 必须是 "owner/name" 形式`);
     }
-    if (seen.has(repo.toLowerCase())) {
+    const repo = repoInput.toLowerCase();
+    if (seen.has(repo)) {
       throw new ConfigError(`${where}.repo 重复: ${repo}`);
     }
-    seen.add(repo.toLowerCase());
+    seen.add(repo);
 
     const allowedActors = entry.allowedActors;
     if (!Array.isArray(allowedActors) || allowedActors.length === 0) {
@@ -279,8 +280,16 @@ export function checkEnvironment(config, deps = {}) {
   }
 
   ensureDirectory(config.runtime.stateDir, 'STATE_DIR');
+  const realWorktreeDirs = new Map();
   for (const repository of config.repositories) {
     ensureDirectory(repository.worktreeDir, `repositories[${repository.repo}].worktreeDir`);
+    const real = fs.realpathSync.native?.(repository.worktreeDir) ?? fs.realpathSync(repository.worktreeDir);
+    const key = process.platform === 'win32' || process.platform === 'darwin' ? real.toLowerCase() : real;
+    const previous = realWorktreeDirs.get(key);
+    if (previous !== undefined) {
+      throw new ConfigError(`worktreeDir 真实路径冲突: ${repository.repo} 与 ${previous}`);
+    }
+    realWorktreeDirs.set(key, repository.repo);
   }
   if (config.harness.home !== null && !fs.existsSync(config.harness.home)) {
     throw new ConfigError(`DSH_HOME 不存在: ${config.harness.home}`);
