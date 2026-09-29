@@ -7,6 +7,7 @@ Current Version: 未编号（版本编号由维护者决定）
 - [范围与工作链路](01-scope-and-flow.md)
 - [Runner → Dev 唤醒消息协议](02-dev-invocation-protocol.md)
 - [Runner 激活与任务触发](03-runner-trigger.md)
+- [本机配置与状态 Schema](04-local-state.md)
 - [开发环境与验证结果](../development.md)
 - [架构取舍](../decisions/README.md)
 
