@@ -15,7 +15,8 @@ V1 最小闭环已按 [Issue #48](https://github.com/cnjimmyshao/fjzx.gh-dev-run
 <runtime.stateDir>/state.json         触发进度、task binding、active run 与恢复所需状态
 <runtime.stateDir>/runner.lock        单实例锁（wx 独占创建）
 <runtime.stateDir>/audit/audit.jsonl  append-only 运行追踪
-<runtime.stateDir>/runs/<runId>/      Harness 事件流与 stderr 的保留副本
+<runtime.stateDir>/runs/<runId>/      Harness 事件流与 stderr 的保留副本（按 KEEP_RUN_LOGS 保留最近若干次；
+                                      仍占槽的运行目录不参与清理）
 ```
 
 ```bash
@@ -33,10 +34,11 @@ node src/index.js resolve-session --repo owner/name --issue <n> --no-session
 
 模块职责：[`config`](../src/config.js) 配置解析与校验；[`state`](../src/state.js) 条件式原子状态与容量记账；[`github`](../src/github.js) `gh` 调用与分页；[`trigger`](../src/trigger.js) Body / 评论候选语义的纯函数；[`workdir`](../src/workdir.js) 每 Issue 独立 worktree；[`prompt`](../src/prompt.js) START / RESUME 消息；[`harness`](../src/harness.js) 官方 headless 调用与 `--json` 判读；[`runner`](../src/runner.js) 轮询、领取临界区与最小反馈；[`index`](../src/index.js) 入口与人工恢复命令。
 
-## 首次实现记录的两项取舍
+## 首次实现记录的三项取舍
 
 1. **接单确认的发布时点。** [本机配置与状态 Schema](current/04-local-state.md) 要求 `sessionId` 在会话建立后立即交付，并且只有拿到「本轮已进入可工作 session」的早期判据后才发布接单确认；若调用件没有早期判据，则必须显式选择「以本轮结果为准、不提前发布」的回退口径。官方 headless `--json` 提供两个可用信号：`session` 事件（立即给出 `sessionId`）与第一个已提交助手内容事件（`text` / `thinking` / `tool_call` / `tool_result`）。本实现选择**前者作为标识来源、后者作为早期判据**：取得 `session` 事件后立即补全 `binding.sessionId`；观察到第一个已提交助手内容后才发布 `BOT:<runnerName>` 接单确认；只有 `sessionId` 而本轮从未产生已提交助手内容（例如凭据或模型调用失败）时，按「未进入可工作 session」发失败回复。本机 0.2.0-rc.2 实测支持这一判据：未知 `--session-id`、空任务等失败都在 `session` 事件之前以 `{"type":"error"}` + 退出码 1 结束。
-2. **`sessionId` 未知时的绑定不明确。** 捕获文件 `runs/<runId>/stdout.jsonl` 在 spawn 前创建、由子进程直接写入，因此正常路径总能核对本轮是否出现过 `session` 事件。只有在「进程确实启动过、却没有留下可读事件流」时，才把 `binding.sessionUnresolved` 置真：此后该 Issue 的有效触发不自动新建 session，而是在 Issue 上留下「本机存在未确认的遗留会话」的失败回复，等维护者核对后用 `resolve-session` 记录真实 session 或确认无遗留会话。
+2. **候选版本校验的窗口。** 所选候选的 identity 与 `updated_at` 校验是领取临界区**之外**的一次重读比较（`verifyCandidate`），临界区内只做基于持久化状态的条件判断（Issue 空闲、旧水位、扫描终点）。这样临界区保持短小、不夹带网络 I/O，代价是重读到写入之间存在毫秒级窗口；水位推进本身以旧水位为条件，因此窗口内出现的新评论不会被跳过，只会留到该 Issue 下次扫描处理。Current 的评论扫描采用本轮读取快照语义，这一实现与该语义一致。
+3. **`sessionId` 未知时的绑定不明确。** 捕获文件 `runs/<runId>/stdout.jsonl` 在 spawn 前创建、由子进程直接写入，因此正常路径总能核对本轮是否出现过 `session` 事件。只有在「进程确实启动过、却没有留下可读事件流」时，才把 `binding.sessionUnresolved` 置真：此后该 Issue 的有效触发不自动新建 session，而是在 Issue 上留下「本机存在未确认的遗留会话」的失败回复，等维护者核对后用 `resolve-session` 记录真实 session 或确认无遗留会话。
 
 ## 验证分层与本次证据
 
@@ -44,7 +46,7 @@ node src/index.js resolve-session --repo owner/name --issue <n> --no-session
 
 | 层级 | 方式 | 结果 |
 | --- | --- | --- |
-| 单元与集成测试 | Node **24.16.0** 下 `npm test`（`node --test`，78 个用例） | 全部通过：baseline 不回放、整批评论只取最新有效、容量不足不消费水位、Issue single-flight、claim 条件失败、START 早期 sessionId 不丢、RESUME 同 session / 同 cwd、spawn / 超时 / 锁冲突 / JSONL 坏行不冒充完成、公开反馈脱敏、恢复核对、单实例锁 |
+| 单元与集成测试 | Node **24.16.0** 下 `npm test`（`node --test`，91 个用例） | 全部通过：baseline 不回放、整批评论只取最新有效、容量不足不消费水位、Issue single-flight、claim 条件失败（含临界区内机器级 / 仓库级容量复核）、START 早期 sessionId 不丢、RESUME 同 session / 同 cwd、spawn / 超时 / 锁冲突 / JSONL 坏行不冒充完成、并发反馈只发一次、拒绝反馈不重复刷屏、公开反馈脱敏、恢复核对、运行日志保留上限、单实例锁 |
 | 端到端（真实边界替身） | [`test/end-to-end.test.js`](../test/end-to-end.test.js)：真实 CLI 入口 + 真实 state / audit + 真实 `git worktree` + 真实子进程；`gh` 为按 API 语义（含 `since` 过滤与分页）的替身 | 通过：baseline → 新评论触发 → 建 worktree → 启动 Harness → 早期取得 sessionId → 发布接单确认 → 审计留痕；越过水位的评论不重放 |
 | 真实 `gh`（只读） | `--once` 对 `cnjimmyshao/fjzx.gh-dev-runner` 做 baseline，`allowedActors` 设为不存在的登录名 | 通过：读到 4 个打开的 Issue（PR 条目被排除）、写入水位、无领取、无 GitHub 回写；第二次 `--once` 无新增内容 |
 | 真实 `dsh` 失败路径 | 隔离 `DSH_HOME` 下 `--profile headless --json`：空任务、未知 `--session-id` | 两次都在 `session` 事件之前以 `error` 事件 + 退出码 1 结束；分别判为 `harness_error` 与 `session_refused`，与实现一致 |

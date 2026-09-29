@@ -15,7 +15,7 @@
 import { randomBytes } from 'node:crypto';
 
 import { HARNESS_FAILURE, classifyHarnessResult, runDirFor } from './harness.js';
-import { truncateDiagnostic } from './log.js';
+import { pruneRunDirs, truncateDiagnostic } from './log.js';
 import { buildTaskMessage } from './prompt.js';
 import {
   ConditionFailed,
@@ -69,6 +69,8 @@ export function createRunner(deps) {
   const clock = deps.clock ?? (() => new Date());
   /** 本进程正在管理的运行；恢复核对不重复处理它们。 */
   const localRuns = new Set();
+  /** 同一运行同一种反馈的进行中发布；并发调用共享同一次 GitHub 回查与发布。 */
+  const feedbackInFlight = new Map();
 
   const nowIso = () => clock().toISOString();
 
@@ -153,12 +155,15 @@ export function createRunner(deps) {
       pid: run.pid,
     });
 
-    if (sessionId) {
+    // 与正常结算使用同一判据：只有 sessionId 而没有已提交助手内容，不算“进入可工作 session”。
+    const enteredWorkableSession = sessionId !== null
+      && (capture.hadAssistantCommit || capture.turnEndReason === 'completed');
+    if (enteredWorkableSession) {
       await ensureSuccessFeedback(run, sessionId);
     } else if (!capture.exists) {
       await ensureFailureFeedback(run, 'session_unresolved');
     } else {
-      await ensureFailureFeedback(run, run.outcome === 'orphan_no_session' ? 'harness_error' : 'session_unresolved');
+      await ensureFailureFeedback(run, 'harness_error');
     }
   }
 
@@ -171,6 +176,14 @@ export function createRunner(deps) {
     await store.update((draft) => {
       pruneEndedRuns(draft, clock().getTime());
     });
+
+    // 保留策略与本轮结果无关：放在领取之前，失败路径同样会被清理。
+    const protect = Object.values(store.read().activeRuns)
+      .filter((run) => ['starting', 'running', 'unknown'].includes(run.status))
+      .map((run) => run.runDir)
+      .filter((dir) => typeof dir === 'string');
+    const pruned = pruneRunDirs(config.runtime.stateDir, config.runtime.keepRunLogs, { protect });
+    if (pruned.removed.length > 0) logger.info(`清理了 ${pruned.removed.length} 个历史运行目录`);
 
     if (machineActiveCount(store.read()) >= config.runtime.maxConcurrentHarnesses) {
       logger.info('机器级 Harness 槽位已满，本轮不扫描 GitHub');
@@ -263,7 +276,9 @@ export function createRunner(deps) {
    */
   async function scanRepository(repository, index) {
     const repo = repository.repo;
-    const since = store.read().repositories[repo]?.lastScanAt ?? null;
+    const lastScanAt = store.read().repositories[repo]?.lastScanAt ?? null;
+    // 与评论扫描一样留 1 秒重叠：since 边界上的更新不会被永久漏掉，只会被多读一次。
+    const since = lastScanAt === null ? null : new Date(Math.max(0, Date.parse(lastScanAt) - 1_000)).toISOString();
     const scanStartedAt = nowIso();
     const listed = await github.listIssuesSince(repo, {
       since,
@@ -791,7 +806,22 @@ export function createRunner(deps) {
    * 接单确认：只在“已进入可工作 session 且已有 sessionId”后发布一次；
    * 重启后按 GitHub 上是否已存在对应评论回查，不依赖会被崩溃打断的布尔标记。
    */
+  function oncePerRun(runId, kind, action) {
+    const key = `${runId}:${kind}`;
+    const pending = feedbackInFlight.get(key);
+    if (pending !== undefined) return pending;
+    const promise = Promise.resolve()
+      .then(action)
+      .finally(() => feedbackInFlight.delete(key));
+    feedbackInFlight.set(key, promise);
+    return promise;
+  }
+
   async function ensureSuccessFeedback(run, sessionId) {
+    return oncePerRun(run.runId, 'success', () => postSuccessFeedback(run, sessionId));
+  }
+
+  async function postSuccessFeedback(run, sessionId) {
     const record = store.read().activeRuns[run.runId];
     if (record?.feedback?.success) return true;
     try {
@@ -805,7 +835,7 @@ export function createRunner(deps) {
       if (!found) {
         await github.postComment(run.repository, run.issueNumber, successBody(sessionId));
       }
-      await markFeedback(run.runId, 'success');
+      await markFeedback(run.runId, 'success', { alreadyPresent: found });
       return true;
     } catch (error) {
       audit.append({
@@ -824,6 +854,10 @@ export function createRunner(deps) {
    * 启动失败反馈：Dev 没有进入可工作 session 时才发；重启后同样先回查再补发。
    */
   async function ensureFailureFeedback(run, category) {
+    return oncePerRun(run.runId, 'failure', () => postFailureFeedback(run, category));
+  }
+
+  async function postFailureFeedback(run, category) {
     const record = store.read().activeRuns[run.runId];
     if (record?.feedback?.failure) return true;
     try {
@@ -839,7 +873,7 @@ export function createRunner(deps) {
       if (!found) {
         await github.postComment(run.repository, run.issueNumber, failureBody(category));
       }
-      await markFeedback(run.runId, 'failure');
+      await markFeedback(run.runId, 'failure', { category, alreadyPresent: found });
       return true;
     } catch (error) {
       audit.append({
@@ -854,10 +888,32 @@ export function createRunner(deps) {
     }
   }
 
-  /** 绑定不明确时拒绝静默新建并行 session，只留下明确的人工恢复提示。 */
+  /**
+   * 绑定不明确时拒绝静默新建并行 session，只留下明确的人工恢复提示。
+   * 该触发不会被消费（水位不动），因此必须先回查是否已经提示过，避免每轮重复刷同一条评论。
+   */
   async function sendRefusalFeedback(repository, issue, category) {
     try {
-      await github.postComment(repository.repo, issue.number, failureBody(category));
+      const existing = await github.listRecentComments(repository.repo, issue.number, { pageSize: 100 });
+      const marker = FAILURE_LABELS[category] ?? '失败';
+      const found = existing.some(
+        (comment) =>
+          isBotFeedback(comment.body) &&
+          String(comment.body).trimStart().startsWith(`BOT:${config.runnerName}`) &&
+          String(comment.body).includes(marker),
+      );
+      if (!found) {
+        await github.postComment(repository.repo, issue.number, failureBody(category));
+      }
+      audit.append({
+        event: 'feedback_sent',
+        repository: repository.repo,
+        issueNumber: issue.number,
+        kind: 'refusal',
+        category,
+        alreadyPresent: found,
+      });
+      return true;
     } catch (error) {
       audit.append({
         event: 'feedback_failed',
@@ -866,16 +922,27 @@ export function createRunner(deps) {
         kind: 'refusal',
         diagnostic: truncateDiagnostic(error.message),
       });
+      return false;
     }
   }
 
-  async function markFeedback(runId, kind) {
+  async function markFeedback(runId, kind, detail = {}) {
+    const snapshot = store.read().activeRuns[runId];
     await store.update((draft) => {
       const record = draft.activeRuns[runId];
       if (!record) return;
       record.feedback = { ...record.feedback, [kind]: true, at: nowIso() };
       const issue = issueState(draft, record.repository, record.issueNumber);
       if (issue.lastTrigger) issue.lastTrigger.feedbackSent = true;
+    });
+    audit.append({
+      event: 'feedback_sent',
+      runId,
+      repository: snapshot?.repository ?? null,
+      issueNumber: snapshot?.issueNumber ?? null,
+      kind,
+      category: detail.category ?? null,
+      alreadyPresent: Boolean(detail.alreadyPresent),
     });
   }
 

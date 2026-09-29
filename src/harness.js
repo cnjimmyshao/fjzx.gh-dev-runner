@@ -417,7 +417,14 @@ export function runDirFor(config, runId) {
  */
 export function summarizeCapture(runDir) {
   const file = path.join(runDir, 'stdout.jsonl');
-  const summary = { exists: false, sessionId: null, turnEndReason: null, hadFinal: false, errorMessage: null };
+  const summary = {
+    exists: false,
+    sessionId: null,
+    turnEndReason: null,
+    hadFinal: false,
+    hadAssistantCommit: false,
+    errorMessage: null,
+  };
   if (!fs.existsSync(file)) return summary;
   summary.exists = true;
   for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
@@ -431,6 +438,9 @@ export function summarizeCapture(runDir) {
     if (event.type === 'session' && typeof event.sessionId === 'string') summary.sessionId = event.sessionId;
     if (event.type === 'status' && event.phase === 'turn_end') summary.turnEndReason = event.reason ?? null;
     if (event.type === 'final') summary.hadFinal = true;
+    if (event.type === 'text' || event.type === 'thinking' || event.type === 'tool_call' || event.type === 'tool_result') {
+      summary.hadAssistantCommit = true;
+    }
     if (event.type === 'error' && typeof event.message === 'string') summary.errorMessage = event.message;
   }
   return summary;

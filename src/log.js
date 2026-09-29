@@ -13,6 +13,46 @@ import path from 'node:path';
 const DIAGNOSTIC_LIMIT = 500;
 
 /**
+ * 按保留上限清理 `<stateDir>/runs/` 下的历史运行目录。
+ * 仍占槽的运行（starting / running / unknown）必须排除在外：子进程还在写自己的事件流。
+ * @param {string} stateDir
+ * @param {number} keep 至少保留最近几次运行
+ * @param {{protect?: Iterable<string>}} [options] 需要保护的 runDir 绝对路径
+ * @returns {{removed: string[]}}
+ */
+export function pruneRunDirs(stateDir, keep, options = {}) {
+  const runsDir = path.join(stateDir, 'runs');
+  const protectedDirs = new Set(options.protect ?? []);
+  if (!fs.existsSync(runsDir)) return { removed: [] };
+
+  const entries = [];
+  for (const entry of fs.readdirSync(runsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const full = path.join(runsDir, entry.name);
+    if (protectedDirs.has(full)) continue;
+    let mtime = 0;
+    try {
+      mtime = fs.statSync(full).mtimeMs;
+    } catch {
+      continue;
+    }
+    entries.push({ full, mtime });
+  }
+  entries.sort((left, right) => right.mtime - left.mtime);
+
+  const removed = [];
+  for (const entry of entries.slice(Math.max(0, keep))) {
+    try {
+      fs.rmSync(entry.full, { recursive: true, force: true });
+      removed.push(entry.full);
+    } catch {
+      /* 清理失败不影响本轮执行 */
+    }
+  }
+  return { removed };
+}
+
+/**
  * @param {string} stateDir
  */
 export function createAuditLog(stateDir) {

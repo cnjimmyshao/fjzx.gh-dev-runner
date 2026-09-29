@@ -160,7 +160,7 @@ function normalizeConfig(raw, context) {
       pollSeconds: positiveInt(raw, 'POLL_SECONDS', DEFAULT_POLL_SECONDS),
       maxConcurrentHarnesses: positiveInt(raw, 'MAX_CONCURRENT_HARNESSES', DEFAULT_MAX_CONCURRENT),
       capture: captureMode(raw.CAPTURE),
-      keepRunLogs: nonNegativeInt(raw, 'KEEP_RUN_LOGS', DEFAULT_KEEP_RUN_LOGS),
+      keepRunLogs: positiveInt(raw, 'KEEP_RUN_LOGS', DEFAULT_KEEP_RUN_LOGS),
     },
     github: {
       timeoutMs: positiveInt(raw, 'GH_TIMEOUT_MS', DEFAULT_GH_TIMEOUT_MS),
@@ -190,6 +190,7 @@ function parseRepositories(value, context) {
   }
 
   const seen = new Set();
+  const worktreeDirs = new Map();
   return parsed.map((entry, index) => {
     const where = `REPOSITORIES_JSON[${index}]`;
     if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
@@ -229,6 +230,12 @@ function parseRepositories(value, context) {
     } else {
       throw new ConfigError(`${where} 未提供 worktreeDir，且未配置 WORK_ROOT`);
     }
+
+    const previous = worktreeDirs.get(worktreeDir);
+    if (previous !== undefined) {
+      throw new ConfigError(`${where}.worktreeDir 与 ${previous} 相同；同一父目录会让不同仓库的 issue-<n> 目录碰撞`);
+    }
+    worktreeDirs.set(worktreeDir, `${where}.repo=${repo}`);
 
     return {
       repo,

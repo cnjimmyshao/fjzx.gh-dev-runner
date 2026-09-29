@@ -340,6 +340,7 @@ test('readCapture 只汇总技术事实，供重启后保守恢复使用', async
       sessionId: 'session-fake',
       turnEndReason: 'completed',
       hadFinal: true,
+      hadAssistantCommit: true,
       errorMessage: null,
     });
   } finally {

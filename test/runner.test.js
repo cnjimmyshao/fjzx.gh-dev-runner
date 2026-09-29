@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 
 import { ConditionFailed, StateStore, issueState, repositoryState } from '../src/state.js';
@@ -865,6 +867,263 @@ test('水位在读取与领取之间被推进时，本次领取条件不成立',
     assert.equal(issueRecord(ctx.store, 7).commentScanWatermark, '49');
   } finally {
     cleanup(ctx.stateDir);
+  }
+});
+
+test('运行日志按保留上限清理，且不动仍占槽的运行目录', async () => {
+  const ctx = await setup({ config: { runtime: { keepRunLogs: 2 } }, plan: { probe: 'alive' } });
+  try {
+    const runsDir = path.join(ctx.stateDir, 'runs');
+    fs.mkdirSync(runsDir, { recursive: true });
+    const stamp = (name, ageMs) => {
+      const dir = path.join(runsDir, name);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'stdout.jsonl'), '{}\n');
+      const when = new Date(Date.now() - ageMs);
+      fs.utimesSync(dir, when, when);
+    };
+    stamp('run-oldest', 5_000);
+    stamp('run-middle', 3_000);
+    stamp('run-newest', 1_000);
+    // 仍占槽的运行目录即使最旧也必须保留：子进程还在写。
+    stamp('run-active', 9_000);
+    await ctx.store.update((draft) => {
+      draft.activeRuns['run-active'] = {
+        runId: 'run-active',
+        repository: 'owner/repo',
+        issueNumber: 1,
+        status: 'running',
+        pid: 999,
+        pidSignature: 'sig',
+        runDir: path.join(runsDir, 'run-active'),
+        startedAt: new Date().toISOString(),
+        trigger: { sourceType: 'comment', sourceId: '1', at: new Date().toISOString() },
+        feedback: {},
+      };
+    });
+
+    await ctx.runner.runCycle();
+    // 保留上限作用于已结束的运行；仍占槽的运行目录不参与计数、也不会被删。
+    const remaining = fs.readdirSync(runsDir).sort();
+    assert.deepEqual(remaining, ['run-active', 'run-middle', 'run-newest']);
+  } finally {
+    cleanup(ctx.stateDir);
+  }
+});
+
+test('并发触发早期判据与结算时，接单确认只发布一次', async () => {
+  const ctx = await setup({
+    script: {
+      listIssuesSince: () => ({ items: [makeIssue({ number: 7, body: '@MB01' })], truncated: false }),
+    },
+    plan: { entered: true },
+  });
+  try {
+    // 让 GitHub 回查变慢，制造“早期判据回调”和“结算回调”重叠的窗口。
+    const original = ctx.github.listRecentComments.bind(ctx.github);
+    ctx.github.listRecentComments = async (...args) => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return original(...args);
+    };
+
+    await seedRepository(ctx.store);
+    await ctx.runner.runCycle();
+    await waitForIdle(ctx.runner);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    const bodies = postedBodies(ctx.github);
+    assert.equal(bodies.length, 1, `接单确认只应发布一次，实际 ${bodies.length} 次`);
+  } finally {
+    cleanup(ctx.stateDir);
+  }
+});
+
+test('claim 临界区内复核机器级容量：快照读取后被占满则不领取、不消费水位', async () => {
+  let ctx = null;
+  const ctxHolder = {};
+  ctx = await setup({
+    script: {
+      listIssuesSince: () => ({ items: [makeIssue({ number: 7 })], truncated: false }),
+      listComments: async () => {
+        if (ctxHolder.injected !== true) {
+          ctxHolder.injected = true;
+          await ctx.store.update((draft) => {
+            draft.activeRuns['run-other'] = {
+              runId: 'run-other',
+              repository: 'owner/other',
+              issueNumber: 1,
+              status: 'running',
+              pid: 4321,
+              pidSignature: 'sig',
+              startedAt: new Date().toISOString(),
+              trigger: { sourceType: 'comment', sourceId: '1', at: new Date().toISOString() },
+              feedback: {},
+            };
+          });
+        }
+        return { items: [makeComment({ id: 60, body: '继续 @MB01' })], truncated: false };
+      },
+    },
+  });
+  try {
+    await seedRepository(ctx.store);
+    await seedIssue(ctx.store, 7, {
+      issueBodyHandled: true,
+      commentScanWatermark: '10',
+      commentScanWatermarkAt: '2026-09-30T00:00:00.000Z',
+    });
+
+    await ctx.runner.runCycle();
+    assert.equal(ctx.harness.launches.length, 0);
+    assert.equal(issueRecord(ctx.store, 7).commentScanWatermark, '10');
+  } finally {
+    cleanup(ctx.stateDir);
+  }
+});
+
+test('claim 临界区内复核仓库级容量：同仓库槽位被占满则不领取', async () => {
+  let ctx = null;
+  const holder = {};
+  ctx = await setup({
+    config: { runtime: { maxConcurrentHarnesses: 3 }, repository: { maxConcurrentHarnesses: 1 } },
+    script: {
+      listIssuesSince: () => ({ items: [makeIssue({ number: 7 })], truncated: false }),
+      listComments: async () => {
+        if (holder.injected !== true) {
+          holder.injected = true;
+          await ctx.store.update((draft) => {
+            draft.activeRuns['run-same-repo'] = {
+              runId: 'run-same-repo',
+              repository: 'owner/repo',
+              issueNumber: 9,
+              status: 'starting',
+              pid: null,
+              startedAt: new Date().toISOString(),
+              trigger: { sourceType: 'comment', sourceId: '2', at: new Date().toISOString() },
+              feedback: {},
+            };
+          });
+        }
+        return { items: [makeComment({ id: 61, body: '继续 @MB01' })], truncated: false };
+      },
+    },
+  });
+  try {
+    await seedRepository(ctx.store);
+    await seedIssue(ctx.store, 7, {
+      issueBodyHandled: true,
+      commentScanWatermark: '10',
+      commentScanWatermarkAt: '2026-09-30T00:00:00.000Z',
+    });
+
+    await ctx.runner.runCycle();
+    assert.equal(ctx.harness.launches.length, 0);
+    assert.equal(issueRecord(ctx.store, 7).commentScanWatermark, '10');
+  } finally {
+    cleanup(ctx.stateDir);
+  }
+});
+
+test('绑定不明确时的拒绝反馈不会每轮重复刷同一条评论', async () => {
+  const posted = [];
+  const ctx = await setup({
+    script: {
+      listIssuesSince: () => ({ items: [makeIssue({ number: 7 })], truncated: false }),
+      listComments: () => ({ items: [makeComment({ id: 70, body: '继续 @MB01' })], truncated: false }),
+      listRecentComments: () => posted.map((body, index) => ({ id: 900 + index, body, created_at: '2026-09-30T00:00:00Z' })),
+    },
+  });
+  try {
+    ctx.github.postComment = async (repo, issueNumber, body) => {
+      posted.push(body);
+    };
+    await seedRepository(ctx.store);
+    await seedIssue(ctx.store, 7, {
+      issueBodyHandled: true,
+      commentScanWatermark: '10',
+      commentScanWatermarkAt: '2026-09-30T00:00:00.000Z',
+      binding: {
+        runnerName: 'MB01',
+        dir: `${ctx.config.repositories[0].worktreeDir}/issue-7`,
+        sessionId: null,
+        sessionUnresolved: true,
+        branch: 'fjzx/issue-7',
+        source: ctx.config.repositories[0].sourceDir,
+        worktreeCreated: true,
+        createdAt: '2026-09-29T00:00:00.000Z',
+      },
+    });
+
+    for (let round = 0; round < 3; round += 1) {
+      await ctx.runner.runCycle();
+    }
+    assert.equal(posted.length, 1, `三轮只应提示一次，实际 ${posted.length} 次`);
+    assert.equal(issueRecord(ctx.store, 7).commentScanWatermark, '10');
+  } finally {
+    cleanup(ctx.stateDir);
+  }
+});
+
+test('重启恢复：只有 sessionId 而没有已提交助手内容时按未进入可工作 session 处理', async () => {
+  const stateDir = tempDir('fjzx-state-');
+  const ctx = await setup({
+    stateDir,
+    plan: {
+      probe: 'gone',
+      capture: {
+        exists: true,
+        sessionId: 'session-lost',
+        turnEndReason: null,
+        hadFinal: false,
+        hadAssistantCommit: false,
+        errorMessage: null,
+      },
+    },
+  });
+  try {
+    await seedRepository(ctx.store);
+    await seedIssue(ctx.store, 7, {
+      issueBodyHandled: true,
+      binding: {
+        runnerName: 'MB01',
+        dir: '/tmp/task',
+        sessionId: null,
+        branch: 'fjzx/issue-7',
+        source: ctx.config.repositories[0].sourceDir,
+        worktreeCreated: true,
+        createdAt: '2026-09-30T00:00:00.000Z',
+      },
+    });
+    await ctx.store.update((draft) => {
+      draft.activeRuns['run-lost'] = {
+        runId: 'run-lost',
+        repository: 'owner/repo',
+        issueNumber: 7,
+        status: 'running',
+        kind: 'start',
+        pid: 556,
+        pidSignature: 'sig',
+        dir: '/tmp/task',
+        runDir: `${stateDir}/runs/run-lost`,
+        sessionId: null,
+        startedAt: '2026-09-30T00:00:00.000Z',
+        trigger: { sourceType: 'issue_body', sourceId: 'issue-7-body', at: '2026-09-30T00:00:00.000Z' },
+        feedback: { success: false, failure: false },
+      };
+    });
+
+    await ctx.runner.recoverActiveRuns();
+    const run = ctx.store.read().activeRuns['run-lost'];
+    assert.equal(run.status, 'exited');
+    assert.equal(run.outcome, 'orphan_lost');
+    assert.equal(issueRecord(ctx.store, 7).binding.sessionId, 'session-lost');
+
+    const bodies = postedBodies(ctx.github);
+    assert.equal(bodies.length, 1);
+    assert.match(bodies[0], /失败/);
+    assert.doesNotMatch(bodies[0], /已接单/);
+  } finally {
+    cleanup(stateDir);
   }
 });
 
