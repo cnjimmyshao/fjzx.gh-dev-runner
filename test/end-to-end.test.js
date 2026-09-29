@@ -28,7 +28,11 @@ const gitBin = resolveGitBin();
  * 端到端边界测试：真实配置加载、真实 state/audit 写入、真实 git worktree、真实子进程 spawn，
  * 只有 GitHub 与 Harness 用本机替身（替身不代写 Runner 自己负责的输出）。
  */
-test('端到端：baseline → 评论触发 → worktree → Harness → 接单确认', { skip: gitBin === null && '本机没有可用的 git' }, async () => {
+test('端到端：baseline → 评论触发 → worktree → Harness → 接单确认', {
+  skip: gitBin === null
+    ? '本机没有可用的 git'
+    : process.versions.node.split('.')[0] !== '24' && 'Runner 只支持 Node 24（engines.node = 24.x）',
+}, async () => {
   const root = tempDir('fjzx-e2e-');
   const fakeBin = path.join(root, 'bin');
   const stateDir = path.join(root, 'state');
