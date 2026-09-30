@@ -53,7 +53,7 @@ node src/index.js resolve-binding --repo owner/name --issue <n> --take-ownership
 
 | 层级 | 方式 | 结果 |
 | --- | --- | --- |
-| 单元与集成测试 | Node **24.16.0** 下 `npm test`（`node --test`，113 个用例） | 全部通过：baseline 不回放、整批评论只取最新有效、容量不足不消费水位、Issue single-flight、claim 条件失败（含临界区内机器级 / 仓库级容量复核）、START 早期 sessionId 不丢、RESUME 同 session / 同 cwd、spawn / 超时 / 锁冲突 / JSONL 坏行不冒充完成、并发反馈只发一次、拒绝反馈不重复刷屏、公开反馈脱敏、会话不匹配不误报接单、反馈补发、跨 Runner 绑定不静默接管、worktree 归属校验、多字节事件流、运行日志保留上限、纯 `wx` 单实例锁（遗留锁人工处理）、孤儿恢复的会话不匹配与无证据判定、launch 同步失败、metadata 不保留 stderr、人工恢复审计 |
+| 单元与集成测试 | Node **24.16.0** 下 `npm test`（`node --test`，110 个用例 @ `0487492`） | 全部通过：baseline 不回放、整批评论只取最新有效、容量不足不消费水位、Issue single-flight、claim 条件失败（含临界区内机器级 / 仓库级容量复核）、START 早期 sessionId 不丢、RESUME 同 session / 同 cwd、spawn / 超时 / 锁冲突 / JSONL 坏行不冒充完成、并发反馈只发一次、拒绝反馈不重复刷屏、公开反馈脱敏、会话不匹配不误报接单、反馈补发、跨 Runner 绑定不静默接管、worktree 归属校验、多字节事件流、运行日志保留上限、纯 `wx` 单实例锁（遗留锁人工处理）、孤儿恢复的会话不匹配与无证据判定、launch 同步失败、metadata 不保留 stderr、人工恢复审计 |
 | 端到端（真实边界替身） | [`test/end-to-end.test.js`](../test/end-to-end.test.js)：真实 CLI 入口 + 真实 state / audit + 真实 `git worktree` + 真实子进程；`gh` 为按 API 语义（含 `since` 过滤与分页）的替身 | 通过：baseline → 新评论触发 → 建 worktree → 启动 Harness → 早期取得 sessionId → 发布接单确认 → 审计留痕；越过水位的评论不重放 |
 | 真实 `gh`（只读） | `--once` 对 `cnjimmyshao/fjzx.gh-dev-runner` 做 baseline，`allowedActors` 设为不存在的登录名 | 通过：读到 4 个打开的 Issue（PR 条目被排除）、写入水位、无领取、无 GitHub 回写；第二次 `--once` 无新增内容 |
 | 真实 `dsh` 失败路径 | 隔离 `DSH_HOME` 下 `--profile headless --json`：空任务、未知 `--session-id` | 两次都在 `session` 事件之前以 `error` 事件 + 退出码 1 结束；分别判为 `harness_error` 与 `session_refused`，与实现一致 |
