@@ -26,10 +26,13 @@ export function acquireInstanceLock(stateDir, options = {}) {
     throw new InstanceLockError(`无法创建实例锁 ${lockPath}: ${error.code ?? error.message}`);
   }
   fs.closeSync(handle);
+  let released = false;
   return {
     path: lockPath,
     pid,
     release() {
+      if (released) return;
+      released = true;
       try { fs.unlinkSync(lockPath); } catch (error) { if (error.code !== 'ENOENT') throw error; }
     },
   };
