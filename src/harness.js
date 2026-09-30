@@ -442,8 +442,16 @@ export function finalizeCapture(runDir, options) {
   }
   const file = path.join(runDir, 'stdout.jsonl');
   if (!fs.existsSync(file)) return;
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (error) {
+    // 读不到就保留原始捕获：收敛失败只告警，不能把已经落盘的结算 / 恢复报成失败。
+    logger.warn(`读取事件流文件失败，保留原始捕获: ${error.code ?? error.message}`);
+    return;
+  }
   const kept = [];
-  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+  for (const line of text.split('\n')) {
     if (line.trim() === '') continue;
     try {
       const event = JSON.parse(line);

@@ -279,6 +279,48 @@ test('resolve-run --outcome running 不收敛仍可能被写入的捕获', async
 
     assert.equal(fs.readFileSync(path.join(runDir, 'stdout.jsonl'), 'utf8'), original, '运行仍在写时不得截断捕获');
     assert.equal(fs.existsSync(path.join(runDir, 'stderr.log')), true);
+    // 确认这条命令确实走到了人工恢复逻辑（而不是在收敛判断处提前返回）。
+    const after = new StateStore(stateDir);
+    after.load();
+    assert.equal(after.read().activeRuns['run-live'].status, 'running');
+    assert.equal(after.read().activeRuns['run-live'].manualResolution.outcome, 'running');
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('resolve-run --outcome exited 在捕获无法读取时仍报告恢复成功', async () => {
+  const root = tempDir('fjzx-index-');
+  try {
+    const { envFile, stateDir } = writeEnv(root);
+    const runDir = path.join(stateDir, 'runs', 'run-broken');
+    // 异常现场：stdout.jsonl 是一个目录（读会 EISDIR）。收敛只能告警，不能把已经落盘的恢复报成失败。
+    fs.mkdirSync(path.join(runDir, 'stdout.jsonl'), { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'stderr.log'), 'diagnostics');
+
+    const store = new StateStore(stateDir);
+    store.load();
+    await store.update((draft) => {
+      draft.activeRuns['run-broken'] = {
+        runId: 'run-broken',
+        repository: 'owner/repo',
+        issueNumber: 7,
+        status: 'unknown',
+        pid: null,
+        sessionId: null,
+        runDir,
+        trigger: { sourceType: 'comment', sourceId: '5', at: '2026-09-30T00:00:00.000Z' },
+      };
+    });
+
+    const code = await main(['--env', envFile, 'resolve-run', '--run', 'run-broken', '--outcome', 'exited'], {
+      stdout: silentStdout(),
+    });
+    assert.equal(code, 0);
+    const after = new StateStore(stateDir);
+    after.load();
+    assert.equal(after.read().activeRuns['run-broken'].status, 'exited');
+    assert.match(fs.readFileSync(path.join(stateDir, 'audit', 'audit.jsonl'), 'utf8'), /"event":"manual_resolution"/);
   } finally {
     cleanup(root);
   }
