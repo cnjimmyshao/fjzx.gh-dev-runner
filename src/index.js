@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 
 import { ConfigError, checkEnvironment, loadConfig } from './config.js';
 import { createGithubClient } from './github.js';
-import { createHarnessRunner } from './harness.js';
+import { createHarnessRunner, finalizeCapture } from './harness.js';
 import { acquireInstanceLock, InstanceLockError } from './instance-lock.js';
 import { createAuditLog, createLogger, truncateDiagnostic } from './log.js';
 import { createRunner } from './runner.js';
@@ -114,7 +114,8 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
   const logger = createLogger(`runner:${config.runnerName}`, stdout);
 
   if (options.command.startsWith('resolve-')) {
-    return runResolveCommand(options, config, stdout, deps);
+    // 人工恢复路径只用 logger 记录收敛捕获时的告警，不需要 sourceDir / DSH_BIN 完好。
+    return runResolveCommand(options, config, stdout, { ...deps, logger });
   }
 
   checkEnvironment(config, deps);
@@ -258,6 +259,14 @@ async function runResolveCommand(options, config, stdout, deps) {
       pid: process.pid,
       ...describeResolution(options),
     });
+    // 维护者确认运行已退出后该运行即已结算：与正常结算、孤儿恢复同序——先落 state 与审计，再按 CAPTURE 收敛捕获。
+    // `--outcome running` 表示该运行仍在写文件，绝不能截断它的捕获。
+    if (options.command === 'resolve-run' && options.flags.outcome === 'exited') {
+      const run = store.read().activeRuns[options.flags.run];
+      if (typeof run?.runDir === 'string' && run.runDir !== '') {
+        finalizeCapture(run.runDir, { capture: config.runtime.capture, logger: deps.logger });
+      }
+    }
     return code;
   } finally {
     lock.release();
