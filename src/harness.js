@@ -418,37 +418,47 @@ export function createHarnessRunner(options) {
 
     /**
      * 按保留策略收敛捕获文件：metadata 只留技术事实，不留模型正文。
+     * 唯一实现在模块级 `finalizeCapture`；这里只是把它接到当前配置与 logger 上。
      * @param {string} runDir
      */
-    finalizeCapture(runDir) {
-      if (config.runtime.capture === 'full') return;
-      // metadata 只保留技术事件：stderr 可能有诊断、模型或工具输出与本机路径，默认不长期留。
-      try {
-        fs.rmSync(path.join(runDir, 'stderr.log'), { force: true });
-      } catch (error) {
-        logger.warn(`清理 stderr 捕获失败: ${error.code ?? error.message}`);
-      }
-      const file = path.join(runDir, 'stdout.jsonl');
-      if (!fs.existsSync(file)) return;
-      const kept = [];
-      for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
-        if (line.trim() === '') continue;
-        try {
-          const event = JSON.parse(line);
-          if (!TECHNICAL_EVENT_TYPES.has(event?.type)) continue;
-          // `final` 只保留“出现过终态”这一事实，不保留回答正文。
-          kept.push(event.type === 'final' ? JSON.stringify({ type: 'final' }) : line);
-        } catch {
-          /* 半截行直接丢弃 */
-        }
-      }
-      try {
-        fs.writeFileSync(file, kept.length === 0 ? '' : `${kept.join('\n')}\n`, { mode: 0o600 });
-      } catch (error) {
-        logger.warn(`收敛事件流文件失败: ${error.code ?? error.message}`);
-      }
-    },
+    finalizeCapture: (runDir) => finalizeCapture(runDir, { capture: config.runtime.capture, logger }),
   };
+}
+
+/**
+ * 按保留策略收敛捕获文件：metadata 只留技术事实，不留模型正文。
+ * 正常结算、孤儿恢复与人工确认退出（`resolve-run --outcome exited`）共用这一处实现。
+ * @param {string} runDir
+ * @param {{capture: string, logger?: {warn: Function}}} options
+ */
+export function finalizeCapture(runDir, options) {
+  if (options.capture === 'full') return;
+  const logger = options.logger ?? { warn: () => {} };
+  // metadata 只保留技术事件：stderr 可能有诊断、模型或工具输出与本机路径，默认不长期留。
+  try {
+    fs.rmSync(path.join(runDir, 'stderr.log'), { force: true });
+  } catch (error) {
+    logger.warn(`清理 stderr 捕获失败: ${error.code ?? error.message}`);
+  }
+  const file = path.join(runDir, 'stdout.jsonl');
+  if (!fs.existsSync(file)) return;
+  const kept = [];
+  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+    if (line.trim() === '') continue;
+    try {
+      const event = JSON.parse(line);
+      if (!TECHNICAL_EVENT_TYPES.has(event?.type)) continue;
+      // `final` 只保留“出现过终态”这一事实，不保留回答正文。
+      kept.push(event.type === 'final' ? JSON.stringify({ type: 'final' }) : line);
+    } catch {
+      /* 半截行直接丢弃 */
+    }
+  }
+  try {
+    fs.writeFileSync(file, kept.length === 0 ? '' : `${kept.join('\n')}\n`, { mode: 0o600 });
+  } catch (error) {
+    logger.warn(`收敛事件流文件失败: ${error.code ?? error.message}`);
+  }
 }
 
 /** @param {object} config @param {string} runId */

@@ -198,6 +198,92 @@ test('resolve-run 拒绝把没有可核对 pid 的运行人工标回 running', a
   }
 });
 
+test('resolve-run --outcome exited 按 CAPTURE 收敛该运行的捕获', async () => {
+  const root = tempDir('fjzx-index-');
+  try {
+    const { envFile, stateDir } = writeEnv(root);
+    const runDir = path.join(stateDir, 'runs', 'run-capture');
+    fs.mkdirSync(runDir, { recursive: true });
+    // 原始捕获：技术事件 + 模型正文 + stderr，模拟一次遗留 unknown 运行的现场。
+    fs.writeFileSync(
+      path.join(runDir, 'stdout.jsonl'),
+      [
+        JSON.stringify({ type: 'session', sessionId: 'session-cap' }),
+        JSON.stringify({ type: 'text', text: 'MODEL-TEXT-MUST-NOT-STAY' }),
+        JSON.stringify({ type: 'status', phase: 'turn_end', turn: 1, reason: { kind: 'completed' } }),
+        JSON.stringify({ type: 'final', text: 'MODEL-TEXT-MUST-NOT-STAY' }),
+      ].join('\n') + '\n',
+    );
+    fs.writeFileSync(path.join(runDir, 'stderr.log'), 'diagnostics');
+
+    const store = new StateStore(stateDir);
+    store.load();
+    await store.update((draft) => {
+      draft.activeRuns['run-capture'] = {
+        runId: 'run-capture',
+        repository: 'owner/repo',
+        issueNumber: 7,
+        status: 'unknown',
+        pid: null,
+        sessionId: null,
+        runDir,
+        trigger: { sourceType: 'comment', sourceId: '5', at: '2026-09-30T00:00:00.000Z' },
+      };
+    });
+
+    await main(['--env', envFile, 'resolve-run', '--run', 'run-capture', '--outcome', 'exited'], {
+      stdout: silentStdout(),
+    });
+
+    const capture = fs.readFileSync(path.join(runDir, 'stdout.jsonl'), 'utf8');
+    assert.match(capture, /"type":"session"/);
+    assert.match(capture, /"phase":"turn_end"/);
+    assert.doesNotMatch(capture, /MODEL-TEXT-MUST-NOT-STAY/, 'metadata 不长期保留模型正文');
+    assert.equal(fs.existsSync(path.join(runDir, 'stderr.log')), false, 'metadata 不长期保留 stderr 捕获');
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('resolve-run --outcome running 不收敛仍可能被写入的捕获', async () => {
+  const root = tempDir('fjzx-index-');
+  try {
+    const { envFile, stateDir } = writeEnv(root);
+    const runDir = path.join(stateDir, 'runs', 'run-live');
+    fs.mkdirSync(runDir, { recursive: true });
+    const original = [
+      JSON.stringify({ type: 'session', sessionId: 'session-live' }),
+      JSON.stringify({ type: 'text', text: 'STILL-WRITING' }),
+    ].join('\n') + '\n';
+    fs.writeFileSync(path.join(runDir, 'stdout.jsonl'), original);
+    fs.writeFileSync(path.join(runDir, 'stderr.log'), 'diagnostics');
+
+    const store = new StateStore(stateDir);
+    store.load();
+    await store.update((draft) => {
+      draft.activeRuns['run-live'] = {
+        runId: 'run-live',
+        repository: 'owner/repo',
+        issueNumber: 7,
+        status: 'unknown',
+        pid: 4242,
+        sessionId: null,
+        runDir,
+        trigger: { sourceType: 'comment', sourceId: '5', at: '2026-09-30T00:00:00.000Z' },
+      };
+    });
+
+    await main(['--env', envFile, 'resolve-run', '--run', 'run-live', '--outcome', 'running'], {
+      stdout: silentStdout(),
+    });
+
+    assert.equal(fs.readFileSync(path.join(runDir, 'stdout.jsonl'), 'utf8'), original, '运行仍在写时不得截断捕获');
+    assert.equal(fs.existsSync(path.join(runDir, 'stderr.log')), true);
+  } finally {
+    cleanup(root);
+  }
+});
+
 test('resolve-binding --take-ownership 由维护者显式迁移绑定', async () => {
   const root = tempDir('fjzx-index-');
   try {
