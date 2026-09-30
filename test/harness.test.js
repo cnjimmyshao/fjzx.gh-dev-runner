@@ -51,7 +51,7 @@ if (mode === 'split-utf8') {
   process.stdout.write(payload.subarray(0, cut));
   await new Promise((resolve) => setTimeout(resolve, 400));
   process.stdout.write(payload.subarray(cut));
-  emit({ type: 'status', phase: 'turn_end', turn: 1, reason: 'completed' });
+  emit({ type: 'status', phase: 'turn_end', turn: 1, reason: { kind: 'completed' } });
   process.exit(0);
 }
 if (mode === 'slow') {
@@ -64,7 +64,7 @@ emit({ type: 'status', phase: 'turn_start', turn: 1 });
 emit({ type: 'thinking', text: 'THINKING-TEXT' });
 emit({ type: 'text', text: 'ANSWER-TEXT' });
 process.stdout.write('{"type":"broken"\\n');
-emit({ type: 'status', phase: 'turn_end', turn: 1, reason: mode === 'failed-round' ? 'error' : 'completed' });
+emit({ type: 'status', phase: 'turn_end', turn: 1, reason: { kind: mode === 'failed-round' ? 'error' : 'completed' } });
 emit({ type: 'final', text: 'ANSWER-TEXT' });
 process.exit(mode === 'failed-round' ? 1 : 0);
 `,

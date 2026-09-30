@@ -242,7 +242,7 @@ export function createHarnessRunner(options) {
             return;
           }
           case 'status': {
-            if (event.phase === 'turn_end') record.turnEndReason = event.reason ?? null;
+            if (event.phase === 'turn_end') record.turnEndReason = turnEndKind(event.reason);
             return;
           }
           case 'error': {
@@ -457,6 +457,17 @@ export function runDirFor(config, runId) {
 }
 
 /**
+ * `turn_end` 事件的 reason 在真实事件流里是对象（dsh 0.2.0-rc.2 实测为 `{"kind":"completed"}`）。
+ * 这里只取它的 `kind` 字符串，供下游统一比较；形状不同即视为未正常结束。
+ * @param {unknown} reason
+ * @returns {string|null}
+ */
+function turnEndKind(reason) {
+  if (reason === null || typeof reason !== 'object') return null;
+  return typeof reason.kind === 'string' ? reason.kind : null;
+}
+
+/**
  * 汇总捕获文件中的技术事实（不读取模型正文）。
  * @param {string} runDir
  */
@@ -481,7 +492,7 @@ export function summarizeCapture(runDir) {
       continue;
     }
     if (event.type === 'session' && typeof event.sessionId === 'string') summary.sessionId = event.sessionId;
-    if (event.type === 'status' && event.phase === 'turn_end') summary.turnEndReason = event.reason ?? null;
+    if (event.type === 'status' && event.phase === 'turn_end') summary.turnEndReason = turnEndKind(event.reason);
     if (event.type === 'final') summary.hadFinal = true;
     if (event.type === 'text' || event.type === 'thinking' || event.type === 'tool_call' || event.type === 'tool_result') {
       summary.hadAssistantCommit = true;
