@@ -468,7 +468,6 @@ export function createRunner(deps) {
     const record = store.read().repositories[repo]?.issues?.[String(issue.number)];
     const watermarkId = record?.commentScanWatermark ?? null;
     const watermarkAt = record?.commentScanWatermarkAt ?? null;
-    const scanStartedAt = nowIso();
     const since = watermarkAt ? new Date(Math.max(0, Date.parse(watermarkAt) - 1_000)).toISOString() : null;
 
     const listed = await github.listComments(repo, issue.number, {
@@ -484,6 +483,9 @@ export function createRunner(deps) {
     if (fresh.length === 0) return { scanned: 0 };
 
     const endpoint = scanEndpoint(fresh);
+    const endpointComment = fresh.findLast?.((comment) => String(comment.id) === String(endpoint))
+      ?? [...fresh].reverse().find((comment) => String(comment.id) === String(endpoint));
+    const endpointAt = endpointComment?.updated_at ?? endpointComment?.created_at ?? watermarkAt;
     const candidate = pickLatestEligibleComment(fresh, {
       runnerName: config.runnerName,
       allowedActors: repository.allowedActors,
@@ -498,7 +500,7 @@ export function createRunner(deps) {
             throw new ConditionFailed('watermark_moved');
           }
           current.commentScanWatermark = endpoint;
-          current.commentScanWatermarkAt = scanStartedAt;
+          current.commentScanWatermarkAt = endpointAt;
         });
       } catch (error) {
         if (!(error instanceof ConditionFailed)) throw error;
@@ -533,7 +535,7 @@ export function createRunner(deps) {
       watermarkId,
       watermarkAt,
       endpoint,
-      scanStartedAt,
+      endpointAt,
     });
   }
 
@@ -620,7 +622,7 @@ export function createRunner(deps) {
             throw new ConditionFailed('watermark_moved');
           }
           record.commentScanWatermark = input.endpoint;
-          record.commentScanWatermarkAt = input.scanStartedAt;
+          record.commentScanWatermarkAt = input.endpointAt;
         } else {
           if (record.issueBodyHandled) throw new ConditionFailed('body_handled');
           record.issueBodyHandled = true;
