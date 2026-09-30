@@ -73,7 +73,7 @@ V1 按原业务 Issue 维持 Coordinator conversation 绑定。同一 Issue 后�
 
 ## 与现有 Runner trigger 的关系
 
-`@COORDINATOR` 是 Coordinator 通道的控制命令；`@MB01`、`@HZ01` 等仍是现有 Implementer Runner 控制命令。两者都以原 Issue 评论作为显式交接记录。
+`@COORDINATOR` 是 Coordinator 通道的保留控制命令；`COORDINATOR` 同时是保留名称，**不得配置为任何 Implementer 的 `runnerName`**。`@MB01`、`@HZ01` 等仍是现有 Implementer Runner 控制命令。这样两类命令在语法上互斥，都以原 Issue 评论作为显式交接记录。
 
 Coordinator 回写的 return-to 评论仍必须满足目标 Runner 已有的授权与触发条件；Coordinator 身份或工具能力不绕过 Runner 授权规则。
 
