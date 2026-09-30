@@ -33,7 +33,7 @@ Implementer 请求 Coordinator 时必须：
 
 return-to 是显式交接信息。Coordinator 不根据评论作者、机器历史或其他隐含状态猜测。原 Implementer 若为 HZ01，就明确写“处理完成后请交回 @HZ01”。
 
-发出协调请求后，Implementer 结束本轮 Harness 调用，不长期占用运行态；原 task binding、workspace、branch、PR 和 session 保留。
+发出协调请求后，如果仍有不依赖协调结论的修复、测试或其他工作，Implementer 继续完成这些工作；只有协调事项已经阻塞剩余工作、没有其他不依赖该决定的工作可继续时，才结束本轮 Harness 调用。退出只释放本轮运行态，原 task binding、workspace、branch、PR 和 session 保留。
 
 ## Coordinator 工作与回写
 
@@ -57,11 +57,13 @@ Coordinator 可以在已经确认的 Requirement / Contract / ADR / Issue 决定
 
 Runner / 本机协调通道只负责识别合法 Coordinator 触发、投递或续接对应 ChatGPT Coordinator conversation，以及必要的会话绑定、去重、运行状态和技术失败信息。
 
+`@COORDINATOR` 的触发授权直接复用目标仓库现有 `repositories[].allowedActors`：只有授权主体发布的控制评论才允许启动 Coordinator 通道。未授权评论按普通非命令评论处理，不启动 Safari / ChatGPT，也不新增第二套 `coordinatorAllowedActors` 配置。
+
 它不分析业务争议、不裁决 Finding、不解析 Coordinator 业务结论、不代 Coordinator 回写 GitHub，也不根据模型输出自行决定唤醒哪个 Implementer。
 
 Coordinator 的 GitHub 读取与回写由 ChatGPT 自己完成，与 Implementer 自己使用开发工具、提交代码和回复 GitHub 的责任模式一致。
 
-Safari / ChatGPT 登录失效、投递失败、回复无法可靠取得等属于技术失败，不能记录成 Coordinator 已完成业务判断。
+Safari / ChatGPT 登录失效、投递失败、回复无法可靠取得等属于技术失败，不能记录成 Coordinator 已完成业务判断。V1 对这类低频失败不建立 pending 队列或自动 retry：本机通道必须留下明确可见的失败反馈／状态，使维护者知道本次协调没有完成；故障恢复后，由授权主体重新发布一条新的、完整的 `@COORDINATOR` 控制评论再次触发。旧失败触发不自动补执行。
 
 ## Coordinator conversation
 
