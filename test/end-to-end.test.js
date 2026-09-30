@@ -207,6 +207,14 @@ process.exit(0);
     }).trim();
     assert.equal(branch, 'fjzx/issue-7');
 
+    // 正常结束的运行也按 CAPTURE=metadata 收敛：run 目录只留技术事件，不留模型正文与 stderr
+    const runDir = path.join(stateDir, 'runs', activeRuns[0].runId);
+    const capture = fs.readFileSync(path.join(runDir, 'stdout.jsonl'), 'utf8');
+    assert.match(capture, /"type":"session"/);
+    assert.match(capture, /"phase":"turn_end"/);
+    assert.doesNotMatch(capture, /working|"type":"text"|"type":"thinking"|"type":"tool_call"/, 'metadata 不长期保留模型正文');
+    assert.equal(fs.existsSync(path.join(runDir, 'stderr.log')), false, 'metadata 不长期保留 stderr 捕获');
+
     // 唯一的公开回写是接单确认，且不含本机路径
     const posted = fs.readFileSync(commentsLog, 'utf8');
     assert.match(posted, /BOT:MB01\nMB01 已接单，Session ID: session-e2e/);

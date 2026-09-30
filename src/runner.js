@@ -887,6 +887,9 @@ export function createRunner(deps) {
     });
 
     const feedback = store.read().activeRuns[run.runId]?.feedback ?? { success: false, failure: false };
+    // 与孤儿恢复同样的顺序：判定结论（state 与 run_end 审计）已经落盘，再按 CAPTURE 收敛原始捕获，
+    // 正常结束的轮次不会把模型正文与 stderr 长期留在 run 目录。
+    harness.finalizeCapture?.(result.runDir);
     if (enteredWorkableSession) {
       if (!feedback.success) await ensureSuccessFeedback(run, sessionId);
     } else {
