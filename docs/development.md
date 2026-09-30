@@ -1,10 +1,71 @@
+<!-- review-refresh: no behavior change; refresh PR head for automated review indexing -->
+
 # 开发环境与验证
 
 ## 当前就绪情况
 
-目前只有规则、需求、文档入口与 Research 阶段的最小调用件（[`scripts/headless-session/`](../scripts/headless-session/README.md)），没有接单运行代码、package.json、依赖锁文件、测试脚本或 Actions Workflow。不能执行不存在的 npm 命令，也不能将这份说明当作环境已部署的证明。
+V1 最小闭环已按 [Issue #48](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/48) 在当前 main 上实现：Runner 是普通 Node.js 程序，带最小 `package.json`、零运行时依赖、`npm test`（`node --test`）与 `npm start`。实现位于 `src/`，测试位于 `test/`。
 
-接单工具计划采用 Node.js。首次代码 PR 建立最小 package.json、必要锁文件与真正可运行的测试命令，不先铺空模块或假测试。工具自身的 Node.js 进程不是本地模型推理服务。
+本机验证状态见下面「验证分层与本次证据」。要点：Node **24.16.0** 下完整 `npm test` 通过；真实 `gh`、真实 `git` 与本机 `dsh` 的失败路径已实测；**尚未**用真实模型凭据跑通一次完整 Harness → Dev 轮次，也**尚未**实测多机与真实并发 Harness。
+
+接单工具采用 Node.js。首次代码 PR 已建立最小 `package.json`、锁文件与真正可运行的测试命令，没有铺空模块或假测试。工具自身的 Node.js 进程不是本地模型推理服务。
+
+## V1 最小闭环的运行方式
+
+```text
+.env / .env.example                   Runner 人工部署配置（唯一入口；不含 GitHub / 模型凭据）
+<runtime.stateDir>/state.json         触发进度、task binding、active run 与恢复所需状态
+<runtime.stateDir>/runner.lock        单实例锁（wx 独占创建）
+<runtime.stateDir>/audit/audit.jsonl  append-only 运行追踪
+<runtime.stateDir>/runs/<runId>/      Harness 事件流与 stderr 的保留副本（按 KEEP_RUN_LOGS 保留最近若干次；
+                                      仍占槽的运行目录不参与清理）
+```
+
+```bash
+npm start                                    # 常驻轮询（runtime.pollSeconds）
+node src/index.js --once                     # 只跑一个 polling cycle
+node src/index.js --once --wait              # 跑一个 cycle 并等本次启动的 Harness 结束
+node src/index.js resolve-run --run <runId> --outcome exited|running [--session <id>]
+node src/index.js resolve-session --repo owner/name --issue <n> --session <id>
+node src/index.js resolve-session --repo owner/name --issue <n> --no-session
+node src/index.js resolve-binding --repo owner/name --issue <n> --take-ownership
+```
+
+实例锁只用 `wx` 独占创建：锁文件已存在就拒绝启动，不判断 stale、不自动删除、不自动接管。异常退出遗留锁属于低频维护事件，维护者确认没有 Runner 在运行后人工删除，再重新启动。Runner 与 `resolve-*` 都先取得实例锁、再加载 `state.json`。`--once` 会等本轮领取的 Harness 结束后再退出（收到 `SIGINT` / `SIGTERM` 时只等最多 5 秒，之后退出并把在跑的 Harness 交给下次启动按恢复语义接管）。`resolve-run` / `resolve-session` / `resolve-binding` 都会写 `manual_resolution` 审计（动作、坐标、是否记录或清除 session），因此长期历史里能回查是谁何时释放了 unknown 槽位、确认了 session 或迁移了 Runner。`resolve-session --no-session` 表示维护者确认该任务没有可续接的 session（清除 `binding.sessionId` 与不明确标记），`resolve-binding --take-ownership` 表示维护者明确把绑定迁移到本机 Runner（目录 / 分支按本机配置重新派生、不续接原机器 session）。
+
+测试与运行都要求在 Node 24 下执行（`engines.node = 24.x`，启动时校验；其他 Node 主版本会明确拒绝启动，测试套件中的端到端用例也会因此失败而不是静默跳过）。
+
+`--env <path>` 可指定 `.env` 之外的部署配置；同名进程环境变量覆盖文件取值（只认 [配置模块](../src/config.js) 列出的键）。`HARNESS_ENV_ALLOWLIST` 只允许非 GitHub 变量：`GH_TOKEN` / `GITHUB_TOKEN` 等保留变量会被直接拒绝，Runner 不向 Harness 转发 GitHub 凭据。`DSH_BIN` 可以是不含分隔符的命令名（按 `PATH` 解析），`.js` 入口由 Runner 自己的 Node 24 进程启动。启动前校验 Node 24、`DSH_BIN`、各仓库 `sourceDir`、`worktreeDir` 与 `gh auth status`，任一项不成立即拒绝启动；`.env.example` 与实现一致。
+
+模块职责：[`config`](../src/config.js) 配置解析与校验；[`state`](../src/state.js) 条件式原子状态与容量记账；[`github`](../src/github.js) `gh` 调用与分页；[`trigger`](../src/trigger.js) Body / 评论候选语义的纯函数；[`workdir`](../src/workdir.js) 每 Issue 独立 worktree；[`prompt`](../src/prompt.js) START / RESUME 消息；[`harness`](../src/harness.js) 官方 headless 调用与 `--json` 判读；[`runner`](../src/runner.js) 轮询、领取临界区与最小反馈；[`index`](../src/index.js) 入口与人工恢复命令。
+
+## 首次实现记录的五项取舍
+
+1. **接单确认的发布时点。** [本机配置与状态 Schema](current/04-local-state.md) 要求 `sessionId` 在会话建立后立即交付，并且只有拿到「本轮已进入可工作 session」的早期判据后才发布接单确认；若调用件没有早期判据，则必须显式选择「以本轮结果为准、不提前发布」的回退口径。官方 headless `--json` 提供两个可用信号：`session` 事件（立即给出 `sessionId`）与第一个已提交助手内容事件（`text` / `thinking` / `tool_call` / `tool_result`）。本实现选择**前者作为标识来源、后者作为早期判据**：取得 `session` 事件后立即补全 `binding.sessionId`；观察到第一个已提交助手内容后才发布 `BOT:<runnerName>` 接单确认；只有 `sessionId` 而本轮从未产生已提交助手内容（例如凭据或模型调用失败）时，按「未进入可工作 session」发失败回复。本机 0.2.0-rc.2 实测支持这一判据：未知 `--session-id`、空任务等失败都在 `session` 事件之前以 `{"type":"error"}` + 退出码 1 结束。
+2. **候选版本校验的窗口。** 所选候选的 identity 与 `updated_at` 校验是领取临界区**之外**的一次重读比较（`verifyCandidate`），临界区内只做基于持久化状态的条件判断（Issue 空闲、旧水位、扫描终点）。这样临界区保持短小、不夹带网络 I/O，代价是重读到写入之间存在毫秒级窗口；水位推进本身以旧水位为条件，因此窗口内出现的新评论不会被跳过，只会留到该 Issue 下次扫描处理。Current 的评论扫描采用本轮读取快照语义，这一实现与该语义一致。
+3. **`sessionId` 未知时的绑定不明确。** 捕获文件 `runs/<runId>/stdout.jsonl` 在 spawn 前创建、由子进程直接写入，因此正常路径总能核对本轮是否出现过 `session` 事件。判据是**有没有会话证据**，不是文件是否存在：进程确实启动过、却始终没有出现 `session` 事件时（进程可能在建立会话之后、写出标识之前退出），把 `binding.sessionUnresolved` 置真。此后该 Issue 的有效触发不自动新建 session，而是在 Issue 上留下一次「本机存在未确认的遗留会话」的提示（同一条提示不重复刷），等维护者核对后用 `resolve-session --session <id>` 记录真实 session，或用 `resolve-session --no-session` 确认无遗留会话后按 START 新建。
+4. **控制反馈的可恢复发布。** 接单确认 / 启动失败回复在 GitHub 临时故障时可能没发出去：运行的记录会保留 `feedbackExpectation`，后续每轮轮询按上限补发（默认 5 次），超过上限写 `feedback_abandoned` 审计并转人工；已结束的运行不会被静默遗忘。“是否已经发过”的常规幂等依据是本机 append-only 审计里的 `feedback_sent`（按 `runId` + 类别回查），不比较 GitHub 的 `created_at` 与本机时钟。V1 明确接受一个极窄崩溃窗口：GitHub 已接受评论、但本机尚未来得及落 `feedback_sent` 就崩溃时，恢复可能重复一条 `BOT:` 控制反馈；这是低频、无业务副作用的可见重复，V1 不为此引入远端幂等协议。
+5. **续接时的分支漂移不阻断。** Runner 只在首次 START 时创建 `fjzx/issue-<n>` worktree；Dev 按目标项目规则另开任务分支（例如 `feat/issue-48-...`）是正常路径，因此 RESUME 遇到“当前 HEAD 与绑定分支不同”时只记本机警告、审计 `workdir_branch_drift` 并在运行记录里留下 `currentBranch`，不停止本轮。真正属于“错误 checkout”的情况——目录不再是配置源仓库的 worktree、目录被替换成非 worktree——仍然硬失败（`worktree_source_mismatch` / `task_dir_not_worktree`）。如果维护者希望分支不等也停止，只需把该判定改成与目录校验同级的失败。
+
+## 验证分层与本次证据
+
+本次（2026-09-30，本机执行电脑，macOS / arm64）实际执行的验证：
+
+| 层级 | 方式 | 结果 |
+| --- | --- | --- |
+| 单元与集成测试 | Node **24.16.0** 下 `npm test`（`node --test`，113 个用例） | 全部通过：baseline 不回放、整批评论只取最新有效、容量不足不消费水位、Issue single-flight、claim 条件失败（含临界区内机器级 / 仓库级容量复核）、START 早期 sessionId 不丢、RESUME 同 session / 同 cwd、spawn / 超时 / 锁冲突 / JSONL 坏行不冒充完成、并发反馈只发一次、拒绝反馈不重复刷屏、公开反馈脱敏、会话不匹配不误报接单、反馈补发、跨 Runner 绑定不静默接管、worktree 归属校验、多字节事件流、运行日志保留上限、纯 `wx` 单实例锁（遗留锁人工处理）、孤儿恢复的会话不匹配与无证据判定、launch 同步失败、metadata 不保留 stderr、人工恢复审计 |
+| 端到端（真实边界替身） | [`test/end-to-end.test.js`](../test/end-to-end.test.js)：真实 CLI 入口 + 真实 state / audit + 真实 `git worktree` + 真实子进程；`gh` 为按 API 语义（含 `since` 过滤与分页）的替身 | 通过：baseline → 新评论触发 → 建 worktree → 启动 Harness → 早期取得 sessionId → 发布接单确认 → 审计留痕；越过水位的评论不重放 |
+| 真实 `gh`（只读） | `--once` 对 `cnjimmyshao/fjzx.gh-dev-runner` 做 baseline，`allowedActors` 设为不存在的登录名 | 通过：读到 4 个打开的 Issue（PR 条目被排除）、写入水位、无领取、无 GitHub 回写；第二次 `--once` 无新增内容 |
+| 真实 `dsh` 失败路径 | 隔离 `DSH_HOME` 下 `--profile headless --json`：空任务、未知 `--session-id` | 两次都在 `session` 事件之前以 `error` 事件 + 退出码 1 结束；分别判为 `harness_error` 与 `session_refused`，与实现一致 |
+| 真实 `git` | [`test/workdir.test.js`](../test/workdir.test.js) 用真实 `git init` / `worktree add` | 通过（本机 `/usr/local/bin/git` 不可用，配置与测试都支持 `GIT_BIN` 覆盖） |
+
+本次**未覆盖**，不得据此声称已验证：
+
+- 没有用真实模型凭据完整跑通一次 Runner → Harness → Dev 轮次；端到端链路里的 Harness 是子进程替身。
+- 没有对真实 GitHub 领取过任务，也没有发布过真实接单确认或失败回复。
+- 本次验证会话的执行沙箱禁止执行 `ps`，因此「重启后按 pid + 启动时间签名核对旧 Harness」只用注入测试覆盖，未在真实 `ps` 可用环境下实测；该环境下探测按设计退化为 `unknown` 保守占槽。
+- 没有在多机、或真实并发 Harness 场景下实测机器级与仓库级并发上限。
+- `docs/current/04-local-state.md` 中「当前调用件」一段描述的是 overlay 调用件的历史状态；产品路径已按 Issue #48 改为官方 headless，该段文字未在本次代码 PR 中修改。
 
 ## V1 运行与分发口径
 
@@ -22,6 +83,7 @@ V1 直接以标准 Node.js 程序运行，不把 Runner 打包成单文件可执
 - 首轮执行、退出后续接、结构化结果与失败信号已由 [`scripts/headless-session/`](../scripts/headless-session/README.md) 在本机实测通过：它用 profile patch 把本地 runner 挂到随附的 headless profile 上，命令仍是「启动器 + headless profile」，未升级、未新增服务或端口。
 - **这些结果只对 Node v26.7.0 的验证环境成立，V1 正式运行版本 Node.js 24 LTS 下尚未重跑。** 上述首轮执行、续接、结构化结果与失败信号都取自 v26，不能据此认定同一 `dsh` 与 profile patch 在 Node 24 下可用。开始实现依赖 Harness CLI 的接单链路之前，须在 Node.js 24（24.x）上重跑这几项并如实记录通过／失败／未覆盖范围；在完成并记录之前，本机 CLI 接入不算已在 V1 运行版本上验证，也不得据此认为关键运行时前置验证已完成。
 - 仍待执行的验证有两项：上面这项 Node.js 24 LTS 重跑，以及维护者日后授权升级 Harness 后按新版本重新实测官方 `--session-id`／`--json` 并复核 overlay 行 id。未授权前不升级工作中的 Harness，也不改用其他界面。
+- 本节记录的是 0.1.5-rc.2 overlay 路线的历史结论。产品路径已由 [Issue #48](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/48) 改为官方 headless profile；官方路径在 Node 24 上的并发／续接行为由 [共享 DSH_HOME 并发实测](research/2026-09-29-shared-dsh-home-concurrency.md) 记录，其失败路径在 2026-09-30 又以隔离 `DSH_HOME` 复核（见上表）。overlay 路线的 Node 24 重跑不再是接单链路的前置条件。
 
 模型 Key 仍按该版本的受支持方式提供（继承环境变量、`$DSH_HOME/.credentials.yaml`、调用目录或 `$DSH_HOME` 下的 `.env`）；本仓库脚本不读取、不打印、不保存 Key。
 
@@ -47,7 +109,7 @@ V1 直接以标准 Node.js 程序运行，不把 Runner 打包成单文件可执
 
 V1 Runner 人工部署配置固定从 `.env` 进入；真实 `.env` 不入 Git，`.env.example` 不含 GitHub / 模型凭据，也不能把 repository 与 `allowedActors` 拆成失去对应关系的全局列表。Runner 启动前用 `gh auth status` 验证执行账户的本机认证；Harness 复用同一账户可访问的 `gh` 配置，Runner 不向 Harness 注入或转发 `GH_TOKEN` / `GITHUB_TOKEN`。模型 Key 由 Harness 当前版本支持的凭据机制管理。Runner 不解析、不记录、不持久化模型 Key；仅当实际 Harness 版本要求环境变量凭据时，才把明确 allowlist 中的变量原样透传给子进程。
 
-共享一个 `DSH_HOME` 是首版优先目标，不是当前版本并发安全性的已验证事实。在 [Issue #36](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/36) 完成并发实测前，实际 Runner 并发保持保守，不因目标 Contract 直接开放到大于 1。
+共享一个 `DSH_HOME` 已由 [Issue #36](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/36) 的实测报告确认：不同 session / 工作目录可并发运行，同 session 的第二写入者由 Harness 自身锁明确拒绝。**是否把 `runtime.maxConcurrentHarnesses` 实际开到大于 1 仍是维护者的决定**；实现按 Contract 默认 `1`，并在运行中重新核对持久化运行态后才占用槽位。
 
 ## 先验证 CLI，再开发接单
 
@@ -63,9 +125,9 @@ V1 Runner 人工部署配置固定从 `.env` 进入；真实 `.env` 不入 Git�
 
 新 CLI 验证不依赖旧 Web 认证方案，不需要打开、关闭或接管正在工作的 Web 服务。Web 实验与本机 CLI 实测分别保留，不混用结论。
 
-## 后续最小实现
+## 最小实现的语义基线（已实现，保留作为核对口径）
 
-CLI 验证确认可用后，再写明确的实施 Issue：少量本机配置与凭据保存、通过 `gh` 读取新建 Issue Body 与扫描水位之后的新评论、维护评论扫描水位、按 `runnerName` 选择最新有效触发候选、去重及任务绑定、CLI 启动／续接、必要日志与反馈。一个 Issue 的当前 task binding 只归一个 Runner。实现时必须覆盖创建时授权主体的一次性初始 Body，以及已有评论后的扫描／候选流程：扫描水位之后的新评论，把水位推进到本轮扫描终点，并只选择其中最新一条通过授权、`BOT:` 排除与 `@<runnerName>` 命令条件的有效控制评论；普通／未授权／`BOT:` 评论不覆盖合法控制评论，多条有效控制评论只执行最新一条；不建设 pending 队列。Runner 自动反馈统一写成 `BOT:<runnerName>` 前缀。新增文件按实际职责组织，不预建 Scheduler、Repository、Adapter 等整套层次。
+以下语义已由 [Issue #48](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/48) 的实现（`src/`）落实；这里保留作为后续修改时的核对口径：少量本机配置、通过 `gh` 读取新建 Issue Body 与扫描水位之后的新评论、维护评论扫描水位、按 `runnerName` 选择最新有效触发候选、去重及任务绑定、CLI 启动／续接、必要日志与反馈。一个 Issue 的当前 task binding 只归一个 Runner。实现覆盖创建时授权主体的一次性初始 Body，以及已有评论后的扫描／候选流程：扫描水位之后的新评论，把水位推进到本轮扫描终点，并只选择其中最新一条通过授权、`BOT:` 排除与 `@<runnerName>` 命令条件的有效控制评论；普通／未授权／`BOT:` 评论不覆盖合法控制评论，多条有效控制评论只执行最新一条；不建设 pending 队列。Runner 自动反馈统一写成 `BOT:<runnerName>` 前缀。文件按实际职责组织，没有预建 Scheduler、Repository、Adapter 等整套层次。
 
 GitHub 资料入口：[gh api](https://cli.github.com/manual/gh_api)、[Issues API](https://docs.github.com/en/rest/issues/issues)、[Issue comments API](https://docs.github.com/en/rest/issues/comments)。后续按实际接口核对分页、更新时间和限流。
 
@@ -73,11 +135,11 @@ GitHub 资料入口：[gh api](https://cli.github.com/manual/gh_api)、[Issues A
 
 只有 Issue 空闲时才扫描 `commentScanWatermark` 之后的新评论；没有新评论就不做任何事。有新评论时，把水位推进到本轮实际扫描终点，并只从本轮读取快照中选择最新一条有效的 `@<runnerName>` 控制评论：排除 `BOT:` 自动反馈、核对作者授权并检查正文结尾。普通／未授权／`BOT:` 评论同样被扫描并越过，因此不会因授权变化而复活，但它们不覆盖同一批里的合法控制评论；多条合法控制评论只执行最新一条。是命令时用一次条件式原子状态更新同时推进水位与 starting / START / RESUME；不是命令则只推进水位。领取仍校验旧水位、扫描终点和所选候选版本，只有写入成功的执行者可以 spawn Harness。评论扫描采用**本轮读取快照语义**：不为本轮已读取的每一条中间评论建立整批版本锁；如果某条中间评论在读取后、落盘前被原地编辑成新命令，不保证纳入本轮。需要可靠表达新的执行意图时应发布新的 `@<runnerName>` 控制评论，而不是依赖编辑旧评论。已经越过水位的历史评论也不会因编辑重新触发。Issue 初始 Body 仍按既有一次性、条件式原子领取规则处理。Harness 启动后水位冻结，直到该 Harness 明确结束；运行期间的新回复不保存为待执行队列，结束后再按同一规则扫描水位之后的新评论。
 
-验证至少覆盖：同一 Issue 运行中不会启动第二个 Harness 且水位不动；多个执行者同时领取同一触发时只有一个写入成功、只有一个 Harness 被启动；claim 已落盘但 spawn 结果未确认时重启，不会启动第二个写入者、也不会把同一 trigger 当新请求再执行；Body 首次读取后再次编辑（删掉命令或新加命令）既不撤销本次领取、也不重新触发；同一 Issue 并发进行 Body 判定与 Comment 领取时，Body 判定仍会落盘、不会因 Comment 先置 starting 而丢失；所选候选在读取后、claim 前被编辑时领取失败并重新读取；中间非候选评论在本轮读取后被原地编辑采用快照语义，不保证纳入本轮，可靠的新控制意图通过发布新评论表达；两个执行者读到同一命令、赢家跑完并释放运行状态后，落后的执行者因水位已推进而领取失败，同一条命令不会被执行两次；未授权用户的评论与 `BOT:` 反馈同样推进扫描水位，之后该用户被加入 `allowedActors` 也不会让这条旧评论变成命令；已经越过水位的历史评论被原地编辑成 `@<runnerName>` 结尾也不会重新触发；与此同时其他 Issue / 其他仓库仍可正常领取；当前 Harness 结束后扫描水位之后的新评论，推进水位到扫描终点，并只取其中最新一条有效的 `@<runnerName>` 控制评论决定是否 RESUME；普通评论、未授权评论和 `BOT:` 反馈不覆盖合法命令，多条合法命令只执行最新一条；普通轮询和重启不会重复执行同一触发，也不会静默丢弃已领取的命令。
+验证至少覆盖（本次实际覆盖情况见上表）：同一 Issue 运行中不会启动第二个 Harness 且水位不动；多个执行者同时领取同一触发时只有一个写入成功、只有一个 Harness 被启动；claim 已落盘但 spawn 结果未确认时重启，不会启动第二个写入者、也不会把同一 trigger 当新请求再执行；Body 首次读取后再次编辑（删掉命令或新加命令）既不撤销本次领取、也不重新触发；同一 Issue 并发进行 Body 判定与 Comment 领取时，Body 判定仍会落盘、不会因 Comment 先置 starting 而丢失；所选候选在读取后、claim 前被编辑时领取失败并重新读取；中间非候选评论在本轮读取后被原地编辑采用快照语义，不保证纳入本轮，可靠的新控制意图通过发布新评论表达；两个执行者读到同一命令、赢家跑完并释放运行状态后，落后的执行者因水位已推进而领取失败，同一条命令不会被执行两次；未授权用户的评论与 `BOT:` 反馈同样推进扫描水位，之后该用户被加入 `allowedActors` 也不会让这条旧评论变成命令；已经越过水位的历史评论被原地编辑成 `@<runnerName>` 结尾也不会重新触发；与此同时其他 Issue / 其他仓库仍可正常领取；当前 Harness 结束后扫描水位之后的新评论，推进水位到扫描终点，并只取其中最新一条有效的 `@<runnerName>` 控制评论决定是否 RESUME；普通评论、未授权评论和 `BOT:` 反馈不覆盖合法命令，多条合法命令只执行最新一条；普通轮询和重启不会重复执行同一触发，也不会静默丢弃已领取的命令。
 
 ## 验证分层
 
-`scripts/headless-session/` 的用法与已验证步骤见其 [README](../scripts/headless-session/README.md)：不调用模型的路径（缺 `DSH_TASK`、引用不存在的会话标识、工作目录不匹配）可直接重跑，不需要 Key；新建与续接需要有效 Key，属本机实测项。
+Runner 的产品路径是官方 headless profile（`--profile headless --json`）。[`scripts/headless-session/`](../scripts/headless-session/README.md) 是面向 0.1.5-rc.2 缺口的一次性验证脚本与 overlay，**不是** Runner 的运行路径，按 [Issue #48](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/48) 也不再是接单链路的前置条件；其不调用模型的检查（缺 `DSH_TASK`、引用不存在的会话标识、工作目录不匹配）仍可按其 README 重跑。
 
 文档改动检查相对链接、术语、权限、Scope 与隐私，不触发模型或真实任务。纯逻辑测试优先隔离 GitHub／Harness；实际 CLI 验证只使用明确授权的测试会话，GitHub 端到端测试另使用授权的测试仓库。第一条端到端链路通过后，再验证第二台电脑不会重复领取同一任务。
 
