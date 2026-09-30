@@ -124,6 +124,8 @@ test('resolve-run 释放或维持一个结果不确定的运行', async () => {
         repository: 'owner/repo',
         issueNumber: 7,
         status: 'unknown',
+        // 人工把运行标回 running 需要可核对的进程身份，否则恢复逻辑无法维持该状态。
+        pid: 4242,
         sessionId: null,
         trigger: { sourceType: 'comment', sourceId: '5', at: '2026-09-30T00:00:00.000Z' },
       };
@@ -148,6 +150,49 @@ test('resolve-run 释放或维持一个结果不确定的运行', async () => {
       main(['--env', envFile, 'resolve-run', '--run', 'nope', '--outcome', 'exited'], { stdout: silentStdout() }),
       /未知 runId/,
     );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('resolve-run 拒绝把没有可核对 pid 的运行人工标回 running', async () => {
+  const root = tempDir('fjzx-index-');
+  try {
+    const { envFile, stateDir } = writeEnv(root);
+    const store = new StateStore(stateDir);
+    store.load();
+    await store.update((draft) => {
+      draft.activeRuns['run-nopid'] = {
+        runId: 'run-nopid',
+        repository: 'owner/repo',
+        issueNumber: 7,
+        status: 'unknown',
+        pid: null,
+        sessionId: null,
+        trigger: { sourceType: 'comment', sourceId: '5', at: '2026-09-30T00:00:00.000Z' },
+      };
+    });
+
+    // 没有可核对的进程身份就无法维持 running：重启恢复会立刻把它归一为 unknown（src/runner.js），
+    // 而 unknown 同样占槽（src/state.js），所以保留 unknown 不损失容量，也不该伪造确定状态。
+    await assert.rejects(
+      main(['--env', envFile, 'resolve-run', '--run', 'run-nopid', '--outcome', 'running'], {
+        stdout: silentStdout(),
+      }),
+      /没有可核对的 pid/,
+    );
+    const rejected = new StateStore(stateDir);
+    rejected.load();
+    assert.equal(rejected.read().activeRuns['run-nopid'].status, 'unknown', '被拒绝的恢复不改变运行状态');
+    assert.equal(rejected.read().activeRuns['run-nopid'].manualResolution, undefined, '被拒绝的恢复不写人工动作');
+
+    // 释放槽位这条路径不需要 pid，仍然可用。
+    await main(['--env', envFile, 'resolve-run', '--run', 'run-nopid', '--outcome', 'exited'], {
+      stdout: silentStdout(),
+    });
+    const released = new StateStore(stateDir);
+    released.load();
+    assert.equal(released.read().activeRuns['run-nopid'].status, 'exited');
   } finally {
     cleanup(root);
   }
