@@ -123,6 +123,8 @@ Reviewer 与处理 Finding 的 Implementer 使用同一标准：
 
 Implementer 需要 Coordinator 时，在原 Issue 说明争议与依据、链接相关 PR / Review，明确写“处理完成后请交回 `@<runnerName>`”，并让评论 trim 后以 `@COORDINATOR` 结尾。return-to Runner 是显式交接信息，Coordinator 不根据作者或历史机器状态猜测。Coordinator 被唤醒后自行读取原 Issue、PR / Review、AGENTS、Current / ADR 等真实依据；能够在既有规则内解决时自行通过 GitHub 回写原 Issue，并以该 return-to Runner 结尾，使现有 Runner RESUME 原 Implementer session；若需要改变 Requirement / Contract / 范围或其他 Maintainer 决定，则只记录待决项并停止，不唤醒 Implementer。Runner / 本机通道不代 Coordinator 写业务结论。完整语义见 `docs/current/06-coordinator-handoff.md`。
 
+`@COORDINATOR` 与现有 Runner 控制命令复用仓库级 `allowedActors` 授权，不另建 Coordinator 授权表。Implementer 发出协调请求后继续完成所有不依赖该结论的工作；只有协调事项确实阻塞剩余工作时才结束本轮 Harness。Coordinator 通道的登录、投递或读取失败必须明确可见，V1 不自动重试或排队；恢复后由授权主体重新发布新的 `@COORDINATOR` 控制评论。
+
 发现者说明依据／歧义、建议和理由、影响及阻塞范围、当前实现是否依赖该选择。Coordinator 整理为可直接决定的问题，不是只列“请确认”。必要时可做小范围候选验证，不把候选方案或维护者未回应视为获批；不受影响的工作继续。
 
 Maintainer 给出明确结论或有限探索授权，Coordinator 将决定记录在关联 Issue。Implementer 实际读取后落实必要文档、代码与测试，Reviewer 核对决定和验证，交接者更新该项状态。不要新建重复决策文档，也不要求人逐项批准普通实现取舍。
