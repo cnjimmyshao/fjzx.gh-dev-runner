@@ -133,7 +133,7 @@ for await (const chunk of process.stdin) chunks.push(chunk);
 emit({ type: 'session', sessionId: 'session-e2e', cwd: process.cwd() });
 emit({ type: 'status', phase: 'turn_start', turn: 1 });
 emit({ type: 'text', text: 'working' });
-emit({ type: 'status', phase: 'turn_end', turn: 1, reason: 'completed' });
+emit({ type: 'status', phase: 'turn_end', turn: 1, reason: { kind: 'completed' } });
 emit({ type: 'final', text: 'done' });
 process.exit(0);
 `,
