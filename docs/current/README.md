@@ -9,6 +9,7 @@ Current Version: 未编号（版本编号由维护者决定）
 - [Runner 激活与任务触发](03-runner-trigger.md)
 - [本机配置与状态 Schema](04-local-state.md)
 - [Harness 并发与轮询调度](05-harness-scheduling.md)
+- [Coordinator 协调与交接](06-coordinator-handoff.md)
 - [开发环境与验证结果](../development.md)
 - [架构取舍](../decisions/README.md)
 
@@ -21,3 +22,7 @@ Harness 调度采用机器级 + 仓库级两级并发上限；一次 polling cyc
 变更依据与代价见 [ADR 0002](../decisions/0002-headless-cli-execution.md)。原 Web Research 仍保留其时间点证据，不因运行方向改变而改写为 CLI 已验证。具体 CLI、凭据加载、续接和输出行为必须在实际安装版本上验证，不能从上游最新文档推断本机可用；实测记录见 [CLI 验证报告](../research/2026-09-23-local-harness-cli-first-run-and-resume.md)。
 
 首版 Runner 的用户可见触发语义已经在 [Runner 激活与任务触发 Contract](03-runner-trigger.md) 中确定：每台机器配置自己的 `runnerName`；一个 Issue 的当前 task binding 只归一个 Runner。新建 Issue 时只检查一次授权主体的初始 Body；已有评论后，只在该 Issue 没有正在运行的 Harness 时扫描水位之后的新评论，把水位推进到本轮扫描终点，并只选择其中最新一条有效的 `@<runnerName>` 控制评论。Runner 自动反馈统一以 `BOT:<runnerName>` 开头，不触发 Harness，但与未授权评论、普通非命令回复一样都会推进扫描水位。运行中的 Issue 直接跳过：不读取新评论、不推进评论水位、不向当前 Harness 注入消息，也不启动第二个写入者；其他 Issue / 其他仓库继续正常轮询。当前 Harness 结束后，下一次轮询才扫描水位之后的新评论；运行期间的新回复不排队，多条有效控制评论只取最新一条，普通／未授权／`BOT:` 评论不覆盖合法控制评论。不再使用 `runner:<machineId>` + `@dev` 两层触发。
+
+Coordinator 的目标交接语义见 [Coordinator 协调与交接 Contract](06-coordinator-handoff.md)：Implementer 在原业务 Issue 显式写明 return-to Runner，并以 `@COORDINATOR` 交接；Coordinator 自行读取 GitHub 依据并自行回写原 Issue，能够继续时以该 return-to Runner 结尾。该 Contract 不表示 Coordinator / Safari 接入代码已经实现。
+
+Coordinator 通道是 Runner / Implementer“本机 `gh` + 无 Web 接入”规则的限定例外：本机只经 Safari 投递／续接正常 ChatGPT Web conversation，ChatGPT 自己使用已连接的 GitHub connector 读写 GitHub；两端实际写回身份都必须进入目标仓库 `allowedActors`。同一 Issue 的 Coordinator conversation 保持单写入者，运行中不注入第二条请求，结束后只取水位之后最新合法 `@COORDINATOR`。

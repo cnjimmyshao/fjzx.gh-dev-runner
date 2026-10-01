@@ -6,6 +6,8 @@
 
 首版接 DeepSeek Harness，不预建多模型适配。不同电脑可承担不同项目，但不承诺任意操作系统和工具链已经兼容；支持矩阵由实际验证逐步形成。
 
+Coordinator 同样由各机器本地配置决定仓库范围。一个仓库可以在多台机器承担 Implementer 工作，但用户／部署者应只在其中一台机器为该仓库启用 Coordinator；配置／启动时必须提示，多机同时启用会造成重复投递或冲突结论。V1 不做跨机选主、迁移检查或重复配置检测。由于 Safari / ChatGPT Web 是本机共享控制面，一台机器同一时刻只运行一个 Coordinator 调用；忙时其他 Repo / Issue 的 Coordinator 评论不读取、不推进水位。
+
 ## 职责
 
 接单工具通过本机 `gh` 增量读取 GitHub Issue Body 与后续评论、检查授权并识别本机 Runner 命令、定位任务会话、启动或续接 Harness CLI，并管理必要的本机控制状态。Runner 只负责确认是否把 Dev 正确叫起、维持任务绑定与单写入者边界；GitHub 上只做最小接单／启动失败反馈，完整进程状态与运行轨迹保留在本机。它不分析业务需求、不裁决 Finding、不代替维护者作决定，也不建设第二套提交、测试和 Review 编排系统。
@@ -23,6 +25,8 @@ Runner、Runner runtime state 与 Harness 使用三个独立边界：
 Runner 启动 Harness 时不得把完整 `process.env` 无差别作为 Harness 配置面。子进程保留 Node／OS／`gh`／Harness 正常启动及定位本机配置所需的最小系统环境，显式传入 `DSH_HOME` 等允许变量；其他确需继承的变量进入明确 allowlist。
 
 GitHub 通信统一复用实际运行账户已经认证的本机 `gh`。Runner 启动前检查 `gh auth status`；Runner 与 Harness 使用同一执行账户可访问的本机 `gh` 认证配置，Runner 不保存、注入或转发 `GH_TOKEN` / `GITHUB_TOKEN` 给 Harness。
+
+上述本机 `gh` 规则适用于 Runner / Implementer。Coordinator 通道按 [Coordinator 协调与交接 Contract](06-coordinator-handoff.md) 使用一个受控例外：本机程序经 Safari 控制正常登录的 ChatGPT Web 投递／续接 Coordinator conversation，ChatGPT 自己使用已连接的 GitHub connector 读取和回写目标仓库。Runner 不代理这些业务读写、不获取 ChatGPT / GitHub cookie 或 token；Coordinator connector 的实际写回身份以及 Implementer 的实际写回身份都必须被目标仓库 `allowedActors` 授权。
 
 ## 任务入口
 
@@ -61,7 +65,7 @@ GitHub 通信统一复用实际运行账户已经认证的本机 `gh`。Runner �
 
 ## 凭据与本机调用
 
-GitHub 通信复用实际运行账户已授权的 `gh`；安装 CLI 不等于该账户已登录或具备目标仓库权限。不通过浏览器操作 GitHub，不另建 GitHub 登录系统。
+Runner / Implementer 的 GitHub 通信复用实际运行账户已授权的 `gh`；安装 CLI 不等于该账户已登录或具备目标仓库权限。Runner / Implementer 不通过浏览器操作 GitHub，也不另建 GitHub 登录系统。Coordinator 的 Safari → ChatGPT Web → GitHub connector 路径是明确限定的例外，认证与回写边界见 [Coordinator 协调与交接 Contract](06-coordinator-handoff.md)；该例外不允许 Runner 抓取或重放浏览器凭据。
 
 部署者在本机配置并保存 DeepSeek 模型 API Key，通过 Harness 支持的凭据配置或子进程环境提供给它。具体存储与加载方式由实际版本验证后落实。Key 不进入仓库、Issue、任务正文、可见命令行实参或日志；本机凭据文件使用适当受限的访问权限，密钥失效时明确提示，不自行轮换或绕过认证。
 
@@ -75,10 +79,10 @@ Runner 的 GitHub 回写只覆盖自己的控制责任：合法的授权初始 B
 
 Harness 正常退出后，Runner **不**自动写 `completed`、执行结束、开发完成或模型回答摘要，也不把 stdout、exit code、`status.kind` 转述成业务结果。Runner 在本机保存完整运行追踪，包括触发来源、START/RESUME、session、启动/结束时间、运行时长、进程/退出状态、异常摘要及必要恢复信息；这些技术状态用于去重、释放执行状态、正确续接和故障诊断，不等于需要公开到 GitHub。业务完成、测试结果、PR、Review 修复与待维护者决定的问题，由 Dev 在 Harness 会话中按目标项目规则直接处理。
 
-Dev 若因必须等待 Maintainer 决定而无法继续，应在原关联 Issue 交接待决问题后结束本轮 Harness，而不是保持 Harness 长期运行并自行轮询 Issue。该退出只释放本轮运行态，不删除 task binding、workspace、branch、已有 PR 或 session。Maintainer 后续回复本身不自动恢复工作；需要继续时，应发布一条新的控制评论并以 `@<runnerName>` 结尾；Runner 下一次扫描只在水位之后的新评论中取最新一条有效控制评论并 RESUME 原 session。后续普通／未授权／`BOT:` 评论不覆盖它；若又有更新的有效控制评论，则只执行更新的那一条。
+Dev 若遇到需要 Coordinator 判断的 Review 争议、Contract 冲突、范围不清或自身无权决定的问题，应按 [Coordinator 协调与交接 Contract](06-coordinator-handoff.md) 在原关联 Issue 说明问题，显式写明“处理完成后请交回 `@<runnerName>`”，并以 `@COORDINATOR` 结尾。若仍有不依赖协调结论的工作则继续；只有协调事项确实阻塞剩余工作时才结束本轮 Harness。Coordinator 能在既有 Contract 内解决时自行回写原 Issue，并以该 return-to Runner 结尾；真正需要 Maintainer 决定时只记录待决项并停止。Dev 若因必须等待 Maintainer 决定而无法继续，应在原关联 Issue 交接待决问题后结束本轮 Harness，而不是保持 Harness 长期运行并自行轮询 Issue。该退出只释放本轮运行态，不删除 task binding、workspace、branch、已有 PR 或 session。Maintainer 后续回复本身不自动恢复工作；需要继续时，应发布一条新的控制评论并以 `@<runnerName>` 结尾；Runner 下一次扫描只在水位之后的新评论中取最新一条有效控制评论并 RESUME 原 session。后续普通／未授权／`BOT:` 评论不覆盖它；若又有更新的有效控制评论，则只执行更新的那一条。
 
 问题归档到任务所属 Issue，不能把私有任务内容转贴到本公开工具仓库。保留必要本机日志，不默认把完整模型输出公开。GitHub 上的“已开始工作”只表示 Runner 已成功启动正确的 Harness 调用，不表示 Dev 已完成任务。
 
 ## 首版不做
 
-不搬运旧 Workflow；不建设自动 Review 裁判、自动 merge／部署、中央数据库、跨机抢单、负载均衡、自动接管现有会话、新 Web 管理界面或复杂故障恢复。已有 Codex Review 和人工决策方式保留；如何自动衔接 Review 信号不属于本次基础接单范围。
+不搬运旧 Workflow；不建设自动 Review 裁判、自动 merge／部署、中央数据库、跨机抢单、负载均衡、自动接管现有会话、新 Web 管理界面或复杂故障恢复。已有 Codex Review 保留；Coordinator 只处理 Implementer 显式交接的争议，不自动监听或裁决每条 Review Finding。Coordinator 的正式触发与 Safari / ChatGPT 接入属于后续实现，不因本 Contract 已定义而声称当前代码已经支持。

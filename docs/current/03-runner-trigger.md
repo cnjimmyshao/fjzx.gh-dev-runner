@@ -20,6 +20,8 @@ runnerName = MB01
 
 `runnerName` 是 fjzx.gh-dev-runner 自己的命令标识，不要求 GitHub 上存在同名用户，也不依赖 GitHub mention 事件。GitHub CLI 只负责读取 Issue / Comment 正文，实际匹配由本地 Runner 完成。
 
+`COORDINATOR` 是 Coordinator 通道的保留控制名称，不得配置为 Implementer 的 `runnerName`；配置校验必须拒绝该值。这样 `@COORDINATOR` 只表示协调交接，不会同时命中现有 Implementer Runner 的 `@<runnerName>` 触发。
+
 ## 命令语法
 
 Runner 只在**授权主体**能够表达 Runner 控制意图的位置检查命令：

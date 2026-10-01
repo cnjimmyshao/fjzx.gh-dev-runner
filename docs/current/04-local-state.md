@@ -321,6 +321,18 @@ V1 只需要一个仓库级完成状态，例如 `baselineCompleted: false | tru
 
 Runner 的 GitHub 控制反馈应遵循 Current 定义的职责边界：[范围与工作链路](01-scope-and-flow.md) 与 [Runner 激活与任务触发 Contract](03-runner-trigger.md) 只规定两类可见反馈——成功接单（`BOT:<runnerName>` + Session ID）与 Harness 根本无法正常启动／续接时的简短失败回复。正常 Harness 结束后的 exit/status、模型输出与本机绑定继续留在本地，不由 Runner 转述成业务完成。
 
+## Coordinator 授权与运行态扩展
+
+Coordinator 后续实现复用仓库级 `repositories[].allowedActors`，不增加第二套授权名单。因为 Implementer 会发布 `@COORDINATOR`、ChatGPT Coordinator 会发布 return-to `@<runnerName>`，部署时必须校验这两个实际 GitHub 写回身份均在目标仓库的 `allowedActors` 中；不满足时 Coordinator 通道应明确不可用，而不是让评论被静默当成普通内容。
+
+Coordinator conversation 的持久化仍遵循最小状态原则：按 repository + Issue 绑定 conversation，并保存足以实现单写入者、扫描水位、active / unknown 恢复和正常去重的状态。运行中的 Coordinator conversation 不读取／消费新 Coordinator 控制评论；结束后只领取水位之后最新合法 `@COORDINATOR`，不建立 pending 队列。unknown 状态只能在确认旧调用已结束后，通过明确的人工解除动作释放；该动作至少写入本机审计记录中的操作者、时间与原因，且不会自动补执行旧触发。精确字段名由后续 Implementation 决定。
+
+由于 Safari / ChatGPT Web 是本机共享控制面，Coordinator 的机器级并发在 V1 **固定为 1**。任一 Coordinator 调用处于 starting / running / unknown 时，其他仓库／Issue 的 Coordinator 扫描也暂停，既不读取新 Coordinator 评论，也不推进各自的 Coordinator 水位；当前调用结束或 unknown 被人工解除后才恢复扫描。V1 不增加可调 Coordinator 并发配置。
+
+每台机器的本地配置还要表达“哪些已接入仓库在本机启用 Coordinator”。同一仓库只应在一台机器启用 Coordinator，这是用户／部署者负责的部署约束而不是分布式运行态；配置／启动说明必须提示多机同时启用会造成重复投递或冲突结论。V1 不在多机之间同步或校验这项唯一性，也不为迁移增加跨机检查、中央数据库／选主／分布式锁。
+
+Coordinator 还需要仓库级 baseline 完成状态的等价语义。某仓库首次在本机启用 Coordinator，或迁移到新机器时，先把当时已有评论全部视为历史并建立 Coordinator 扫描水位，不执行历史 `@COORDINATOR`；baseline 完成后才开始接收新的协调触发。初始化窗口内出现的触发可能被划入历史，这是 V1 明确接受的边界，需要时由授权主体在 baseline 完成后重新发布新命令。baseline 失败时从头重做，不保存 pending 队列或历史 replay 状态。具体字段名由 Implementation 决定。
+
 ## 当前存储选择
 
 首版使用本机 JSON 文件，不引入 SQLite、MongoDB、中央数据库或分布式状态服务。当前数据量、单机单实例和人工可检查需求下，JSON 足够简单；未来只有在真实并发、查询或数据量需求出现时再通过新的 Issue / Contract 讨论替换。
