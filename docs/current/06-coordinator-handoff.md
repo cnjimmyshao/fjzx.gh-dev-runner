@@ -59,15 +59,19 @@ Runner / 本机协调通道只负责识别合法 Coordinator 触发、投递或�
 
 `@COORDINATOR` 的触发授权直接复用目标仓库现有 `repositories[].allowedActors`：只有授权主体发布的控制评论才允许启动 Coordinator 通道。未授权评论按普通非命令评论处理，不启动 Safari / ChatGPT，也不新增第二套 `coordinatorAllowedActors` 配置。
 
+由于 Implementer 会自行发布 `@COORDINATOR`，Coordinator 也会自行发布 return-to `@<runnerName>`，**这两个实际 GitHub 写回身份都必须属于目标仓库的 `allowedActors`**。部署／启动 Coordinator 能力前应校验所使用的 Implementer GitHub 身份与 ChatGPT GitHub connector 身份满足该仓库授权；不满足时该协调通道不得宣称可用，应明确报告配置错误。自动化身份不因角色名称获得授权，也不绕过现有 allowlist。
+
 它不分析业务争议、不裁决 Finding、不解析 Coordinator 业务结论、不代 Coordinator 回写 GitHub，也不根据模型输出自行决定唤醒哪个 Implementer。
 
-Coordinator 的 GitHub 读取与回写由 ChatGPT 自己完成，与 Implementer 自己使用开发工具、提交代码和回复 GitHub 的责任模式一致。
+Coordinator 的 GitHub 读取与回写由 ChatGPT 自己完成，与 Implementer 自己使用开发工具、提交代码和回复 GitHub 的责任模式一致。Coordinator 是现有“Runner / Harness 的 GitHub 通信统一复用本机 `gh`、不通过浏览器操作 GitHub”规则的**受控例外**：本机程序只通过 Safari 控制正常登录的 ChatGPT Web 来投递／续接 Coordinator conversation；ChatGPT 在该会话内使用已连接、已授权的 GitHub connector 读取和回写目标仓库。Runner 不抓取或转发 ChatGPT / GitHub cookie、token，也不建立自己的第二套 GitHub 登录系统。该例外只适用于 Coordinator 通道，不改变 Implementer / Runner 继续使用本机 `gh` 的规则。
 
 Safari / ChatGPT 登录失效、投递失败、回复无法可靠取得等属于技术失败，不能记录成 Coordinator 已完成业务判断。V1 对这类低频失败不建立 pending 队列或自动 retry：本机通道必须留下明确可见的失败反馈／状态，使维护者知道本次协调没有完成；故障恢复后，由授权主体重新发布一条新的、完整的 `@COORDINATOR` 控制评论再次触发。旧失败触发不自动补执行。
 
 ## Coordinator conversation
 
 V1 按原业务 Issue 维持 Coordinator conversation 绑定。同一 Issue 后续再次请求 Coordinator 时继续已绑定的 ChatGPT conversation，不为每条 Finding 新建 conversation。
+
+同一个 Issue / Coordinator conversation 同一时刻只允许一个 Coordinator 调用写入。conversation 处于 starting / running / unknown 时，本机协调通道不读取该 Issue 的新 Coordinator 控制评论、不推进 Coordinator 自己的评论扫描水位，也不向正在运行的 conversation 注入第二条请求。当前 Coordinator 调用明确结束后，下一次扫描才读取原水位之后的新评论，并只取其中**最新一条**合法的 `@COORDINATOR` 控制评论；更早的 Coordinator 控制评论不排队、不补执行，普通／未授权评论不成为候选。claim / 水位推进与 active Coordinator run 的建立必须按与现有 Runner trigger 等价的条件式单写入者语义完成，避免轮询或重启重复投递；具体字段名和持久化布局仍由后续 Implementation 决定。
 
 具体本机字段、Safari CLI 参数和持久化表示属于后续 Implementation，不在本 Contract 中提前冻结。
 
