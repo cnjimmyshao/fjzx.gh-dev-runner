@@ -321,6 +321,12 @@ V1 只需要一个仓库级完成状态，例如 `baselineCompleted: false | tru
 
 Runner 的 GitHub 控制反馈应遵循 Current 定义的职责边界：[范围与工作链路](01-scope-and-flow.md) 与 [Runner 激活与任务触发 Contract](03-runner-trigger.md) 只规定两类可见反馈——成功接单（`BOT:<runnerName>` + Session ID）与 Harness 根本无法正常启动／续接时的简短失败回复。正常 Harness 结束后的 exit/status、模型输出与本机绑定继续留在本地，不由 Runner 转述成业务完成。
 
+## Coordinator 授权与运行态扩展
+
+Coordinator 后续实现复用仓库级 `repositories[].allowedActors`，不增加第二套授权名单。因为 Implementer 会发布 `@COORDINATOR`、ChatGPT Coordinator 会发布 return-to `@<runnerName>`，部署时必须校验这两个实际 GitHub 写回身份均在目标仓库的 `allowedActors` 中；不满足时 Coordinator 通道应明确不可用，而不是让评论被静默当成普通内容。
+
+Coordinator conversation 的持久化仍遵循最小状态原则：按 repository + Issue 绑定 conversation，并保存足以实现单写入者、扫描水位、active / unknown 恢复和正常去重的状态。运行中的 Coordinator conversation 不读取／消费新 Coordinator 控制评论；结束后只领取水位之后最新合法 `@COORDINATOR`，不建立 pending 队列。精确字段名由后续 Implementation 决定。
+
 ## 当前存储选择
 
 首版使用本机 JSON 文件，不引入 SQLite、MongoDB、中央数据库或分布式状态服务。当前数据量、单机单实例和人工可检查需求下，JSON 足够简单；未来只有在真实并发、查询或数据量需求出现时再通过新的 Issue / Contract 讨论替换。
