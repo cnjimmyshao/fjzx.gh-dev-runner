@@ -329,6 +329,8 @@ Coordinator conversation 的持久化仍遵循最小状态原则：按 repositor
 
 每台机器的本地配置还要表达“哪些已接入仓库在本机启用 Coordinator”。同一仓库只应在一台机器启用 Coordinator，这是部署约束而不是分布式运行态；V1 不在多机之间同步或校验这项唯一性，也不为此引入中央数据库／选主／分布式锁。
 
+Coordinator 还需要仓库级 baseline 完成状态的等价语义。某仓库首次在本机启用 Coordinator，或迁移到新机器时，先把当时已有评论全部视为历史并建立 Coordinator 扫描水位，不执行历史 `@COORDINATOR`；baseline 完成后才开始接收新的协调触发。初始化窗口内出现的触发可能被划入历史，这是 V1 明确接受的边界，需要时由授权主体在 baseline 完成后重新发布新命令。baseline 失败时从头重做，不保存 pending 队列或历史 replay 状态。具体字段名由 Implementation 决定。
+
 ## 当前存储选择
 
 首版使用本机 JSON 文件，不引入 SQLite、MongoDB、中央数据库或分布式状态服务。当前数据量、单机单实例和人工可检查需求下，JSON 足够简单；未来只有在真实并发、查询或数据量需求出现时再通过新的 Issue / Contract 讨论替换。
