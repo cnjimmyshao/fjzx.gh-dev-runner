@@ -24,6 +24,8 @@ Runner 启动 Harness 时不得把完整 `process.env` 无差别作为 Harness �
 
 GitHub 通信统一复用实际运行账户已经认证的本机 `gh`。Runner 启动前检查 `gh auth status`；Runner 与 Harness 使用同一执行账户可访问的本机 `gh` 认证配置，Runner 不保存、注入或转发 `GH_TOKEN` / `GITHUB_TOKEN` 给 Harness。
 
+上述本机 `gh` 规则适用于 Runner / Implementer。Coordinator 通道按 [Coordinator 协调与交接 Contract](06-coordinator-handoff.md) 使用一个受控例外：本机程序经 Safari 控制正常登录的 ChatGPT Web 投递／续接 Coordinator conversation，ChatGPT 自己使用已连接的 GitHub connector 读取和回写目标仓库。Runner 不代理这些业务读写、不获取 ChatGPT / GitHub cookie 或 token；Coordinator connector 的实际写回身份以及 Implementer 的实际写回身份都必须被目标仓库 `allowedActors` 授权。
+
 ## 任务入口
 
 本地按配置周期检查已接入仓库的新增内容，不用 Actions 定时扫描，也不为每次空检查调用模型。读取增量而非反复重读全部 Issue；初次启动不把历史命令全部重放。
@@ -61,7 +63,7 @@ GitHub 通信统一复用实际运行账户已经认证的本机 `gh`。Runner �
 
 ## 凭据与本机调用
 
-GitHub 通信复用实际运行账户已授权的 `gh`；安装 CLI 不等于该账户已登录或具备目标仓库权限。不通过浏览器操作 GitHub，不另建 GitHub 登录系统。
+Runner / Implementer 的 GitHub 通信复用实际运行账户已授权的 `gh`；安装 CLI 不等于该账户已登录或具备目标仓库权限。Runner / Implementer 不通过浏览器操作 GitHub，也不另建 GitHub 登录系统。Coordinator 的 Safari → ChatGPT Web → GitHub connector 路径是明确限定的例外，认证与回写边界见 [Coordinator 协调与交接 Contract](06-coordinator-handoff.md)；该例外不允许 Runner 抓取或重放浏览器凭据。
 
 部署者在本机配置并保存 DeepSeek 模型 API Key，通过 Harness 支持的凭据配置或子进程环境提供给它。具体存储与加载方式由实际版本验证后落实。Key 不进入仓库、Issue、任务正文、可见命令行实参或日志；本机凭据文件使用适当受限的访问权限，密钥失效时明确提示，不自行轮换或绕过认证。
 
