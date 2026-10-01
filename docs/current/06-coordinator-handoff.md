@@ -73,6 +73,8 @@ V1 按原业务 Issue 维持 Coordinator conversation 绑定。同一 Issue 后�
 
 同一个 Issue / Coordinator conversation 同一时刻只允许一个 Coordinator 调用写入。conversation 处于 starting / running / unknown 时，本机协调通道不读取该 Issue 的新 Coordinator 控制评论、不推进 Coordinator 自己的评论扫描水位，也不向正在运行的 conversation 注入第二条请求。当前 Coordinator 调用明确结束后，下一次扫描才读取原水位之后的新评论，并只取其中**最新一条**合法的 `@COORDINATOR` 控制评论；更早的 Coordinator 控制评论不排队、不补执行，普通／未授权评论不成为候选。claim / 水位推进与 active Coordinator run 的建立必须按与现有 Runner trigger 等价的条件式单写入者语义完成，避免同一本机轮询或重启重复投递；具体字段名和持久化布局仍由后续 Implementation 决定。
 
+Safari / ChatGPT Web 是本机共享控制面，因此 V1 另外固定**机器级 Coordinator 全局并发为 1**，不提供 `maxConcurrentCoordinators` 等可调并发。只要本机任意仓库／Issue 存在 starting / running / unknown 的 Coordinator 调用，本机就不扫描其他仓库／Issue 的 Coordinator 新评论、不推进它们的 Coordinator 扫描水位，也不领取第二个 Coordinator 请求。当前调用明确结束或 unknown 被人工解除后，后续 polling cycle 才恢复扫描，并按各 Issue 自己的水位选择最新合法 `@COORDINATOR`。
+
 如果重启或异常后无法确认旧 Coordinator 调用是否已经结束，则记为 `unknown` 并保守阻止新的投递。V1 不自动猜测结束状态；维护者确认旧调用已经停止／不再可能继续写入后，可以执行一个**明确、可审计的人工解除动作**，将该 Issue 的 Coordinator active / unknown 状态标记为已结束并记录解除时间、操作者和原因。解除本身不补执行旧触发，也不自动启动新调用；需要继续时由授权主体重新发布新的 `@COORDINATOR` 控制评论。
 
 具体本机字段、Safari CLI 参数和持久化表示属于后续 Implementation，不在本 Contract 中提前冻结。
@@ -90,13 +92,13 @@ V1 采用与现有 Runner 首次接入相同的简单语义：
 5. 需要可靠执行时，在 baseline 完成后由授权主体重新发布一条新的、完整的 `@COORDINATOR`；
 6. baseline 中断或失败时不建立 pending 队列，也不回放历史；下次从头重新做该仓库的 Coordinator baseline。
 
-迁移到新机器时同样按上述规则重新 baseline，不搬运旧机器尚未处理的 Coordinator trigger 队列。原有 ChatGPT conversation 是否能够继续复用，由后续 Implementation 在不破坏本 Contract 的前提下决定；不能确认时明确人工恢复，不把历史 `@COORDINATOR` 当成新请求重放。
+迁移到新机器时同样按上述规则重新 baseline，不搬运旧机器尚未处理的 Coordinator trigger 队列。**迁移由用户／部署者人工负责：启用新机器前必须确保旧机器已经不再运行该仓库的 Coordinator。** V1 只在部署说明中明确提示这一约束，不增加跨机探测、迁移握手、状态转移或程序级阻塞校验；如果旧、新机器同时运行同一仓库的 Coordinator，可能产生重复投递、重复回写或冲突结论。原有 ChatGPT conversation 是否能够继续复用，由后续 Implementation 在不破坏本 Contract 的前提下决定；不能确认时明确人工恢复，不把历史 `@COORDINATOR` 当成新请求重放。
 
 ## Coordinator 仓库归属与多机部署
 
 每台机器通过自己的本地配置决定哪些仓库启用 Coordinator 通道；只有本机明确启用 Coordinator 的仓库，才处理该仓库的 `@COORDINATOR`。具体配置字段名由后续 Implementation 决定，不要求新增中央路由服务。
 
-V1 将“**同一个仓库在任一时刻只由一台机器启用 Coordinator**”作为部署约束，由部署者保证。即使同一仓库可以同时被 MB01、HZ01 等多台机器用于 Implementer 工作，也不应在多台机器上同时为该仓库启用 Coordinator。V1 不建设跨机发现、选主、分布式锁或自动重复配置检测；若误把同一仓库的 Coordinator 同时配置到多台机器，属于部署配置错误，可能产生重复投递和重复结论，应通过修正本机配置恢复。
+V1 将“**同一个仓库在任一时刻只由一台机器启用 Coordinator**”作为部署约束，由用户／部署者保证。即使同一仓库可以同时被 MB01、HZ01 等多台机器用于 Implementer 工作，也不应在多台机器上同时为该仓库启用 Coordinator。配置／启动说明必须明确提示：**请确保该 Repo 的 Coordinator 只在这一台机器运行；多台机器同时运行会导致重复投递、重复回写或冲突结论。** V1 不建设跨机发现、选主、分布式锁、迁移检查或自动重复配置检测；若发生误配，由用户修正本机配置恢复。
 
 ## 与现有 Runner trigger 的关系
 
