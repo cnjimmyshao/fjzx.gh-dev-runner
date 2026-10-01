@@ -6,7 +6,7 @@
 
 首版接 DeepSeek Harness，不预建多模型适配。不同电脑可承担不同项目，但不承诺任意操作系统和工具链已经兼容；支持矩阵由实际验证逐步形成。
 
-Coordinator 同样由各机器本地配置决定仓库范围。一个仓库可以在多台机器承担 Implementer 工作，但部署者应只在其中一台机器为该仓库启用 Coordinator；V1 不做跨机选主或重复配置检测。
+Coordinator 同样由各机器本地配置决定仓库范围。一个仓库可以在多台机器承担 Implementer 工作，但用户／部署者应只在其中一台机器为该仓库启用 Coordinator；配置／启动时必须提示，多机同时启用会造成重复投递或冲突结论。V1 不做跨机选主、迁移检查或重复配置检测。由于 Safari / ChatGPT Web 是本机共享控制面，一台机器同一时刻只运行一个 Coordinator 调用；忙时其他 Repo / Issue 的 Coordinator 评论不读取、不推进水位。
 
 ## 职责
 
