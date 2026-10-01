@@ -325,7 +325,9 @@ Runner 的 GitHub 控制反馈应遵循 Current 定义的职责边界：[范围�
 
 Coordinator 后续实现复用仓库级 `repositories[].allowedActors`，不增加第二套授权名单。因为 Implementer 会发布 `@COORDINATOR`、ChatGPT Coordinator 会发布 return-to `@<runnerName>`，部署时必须校验这两个实际 GitHub 写回身份均在目标仓库的 `allowedActors` 中；不满足时 Coordinator 通道应明确不可用，而不是让评论被静默当成普通内容。
 
-Coordinator conversation 的持久化仍遵循最小状态原则：按 repository + Issue 绑定 conversation，并保存足以实现单写入者、扫描水位、active / unknown 恢复和正常去重的状态。运行中的 Coordinator conversation 不读取／消费新 Coordinator 控制评论；结束后只领取水位之后最新合法 `@COORDINATOR`，不建立 pending 队列。精确字段名由后续 Implementation 决定。
+Coordinator conversation 的持久化仍遵循最小状态原则：按 repository + Issue 绑定 conversation，并保存足以实现单写入者、扫描水位、active / unknown 恢复和正常去重的状态。运行中的 Coordinator conversation 不读取／消费新 Coordinator 控制评论；结束后只领取水位之后最新合法 `@COORDINATOR`，不建立 pending 队列。unknown 状态只能在确认旧调用已结束后，通过明确的人工解除动作释放；该动作至少写入本机审计记录中的操作者、时间与原因，且不会自动补执行旧触发。精确字段名由后续 Implementation 决定。
+
+每台机器的本地配置还要表达“哪些已接入仓库在本机启用 Coordinator”。同一仓库只应在一台机器启用 Coordinator，这是部署约束而不是分布式运行态；V1 不在多机之间同步或校验这项唯一性，也不为此引入中央数据库／选主／分布式锁。
 
 ## 当前存储选择
 
