@@ -77,6 +77,21 @@ V1 按原业务 Issue 维持 Coordinator conversation 绑定。同一 Issue 后�
 
 具体本机字段、Safari CLI 参数和持久化表示属于后续 Implementation，不在本 Contract 中提前冻结。
 
+## Coordinator 首次启用与迁移 baseline
+
+某个仓库第一次在本机启用 Coordinator，或把该仓库的 Coordinator 归属迁移到另一台机器时，先做一次**简单的历史 baseline**。baseline 完成以前，该仓库的 Coordinator 通道尚未正式接单。
+
+V1 采用与现有 Runner 首次接入相同的简单语义：
+
+1. 读取该仓库当前已有 Issue / Comment 的 Coordinator 相关扫描边界；
+2. 把当时已有评论全部视为历史，只建立各 Issue 的 Coordinator 扫描水位，不执行其中任何历史 `@COORDINATOR`；
+3. baseline 完成后，该仓库才开始正常增量扫描新的 Coordinator 控制评论；
+4. baseline 期间恰好出现的新评论，可能在初始化完成时被划入历史而不执行；V1 接受这一低频边界；
+5. 需要可靠执行时，在 baseline 完成后由授权主体重新发布一条新的、完整的 `@COORDINATOR`；
+6. baseline 中断或失败时不建立 pending 队列，也不回放历史；下次从头重新做该仓库的 Coordinator baseline。
+
+迁移到新机器时同样按上述规则重新 baseline，不搬运旧机器尚未处理的 Coordinator trigger 队列。原有 ChatGPT conversation 是否能够继续复用，由后续 Implementation 在不破坏本 Contract 的前提下决定；不能确认时明确人工恢复，不把历史 `@COORDINATOR` 当成新请求重放。
+
 ## Coordinator 仓库归属与多机部署
 
 每台机器通过自己的本地配置决定哪些仓库启用 Coordinator 通道；只有本机明确启用 Coordinator 的仓库，才处理该仓库的 `@COORDINATOR`。具体配置字段名由后续 Implementation 决定，不要求新增中央路由服务。
