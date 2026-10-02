@@ -127,6 +127,9 @@ function normalizeConfig(raw, context) {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(runnerName)) {
     throw new ConfigError('RUNNER_NAME 只能包含字母、数字、点、下划线与连字符，且需以字母或数字开头');
   }
+  if (runnerName === 'COORDINATOR') {
+    throw new ConfigError('RUNNER_NAME=COORDINATOR 是 Coordinator 通道保留名称，不能用于 Implementer Runner');
+  }
 
   const stateDir = resolvePath(requireString(raw, 'STATE_DIR'), context.cwd, 'STATE_DIR');
   const workspaceDir = optionalString(raw, 'WORK_ROOT')
