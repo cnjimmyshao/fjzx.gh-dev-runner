@@ -23,6 +23,13 @@ test('正文 trim 后以 @<runnerName> 结尾才算命令', () => {
   assert.equal(isRunnerCommand(null, 'MB01'), false);
 });
 
+test('Actor 标记位于最终控制命令之前时，尾部判定不受影响', () => {
+  const withActor = '协调请求见上。\n\n---\nActor: implementer\n\n@MB01';
+  assert.equal(isRunnerCommand(withActor, 'MB01'), true);
+  const actorAfterCommand = '协调请求见上。\n\n@MB01\n\n---\nActor: implementer';
+  assert.equal(isRunnerCommand(actorAfterCommand, 'MB01'), false);
+});
+
 test('BOT: 前缀评论永不参与候选选择', () => {
   assert.equal(isBotFeedback('BOT:MB01\n已接单'), true);
   assert.equal(isBotFeedback('  BOT:MB01'), true);
