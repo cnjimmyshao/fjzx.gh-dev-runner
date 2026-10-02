@@ -23,7 +23,8 @@ Runner 必须区分两类唤醒：
 2. 必须实际读取目标仓库当前的 AGENTS、Current、Issue 与相关 PR / Review，不能假设 session 中已有认识仍然最新；
 3. 分析、编码、测试、提交 PR、处理 Review 与提出待决问题由 Dev 按目标项目规则完成；
 4. 需要 Maintainer 决定或授权的事项回到关联 Issue；
-5. 本消息只负责指向任务，不是需求正文。
+5. 本消息只负责指向任务，不是需求正文；
+6. 本轮 Dev 的 Logical Actor 是 `implementer`；Dev 自己发布 GitHub 业务评论时按 [Logical Actor Identity](07-logical-actor-identity.md) 标记 `Actor: implementer`，且不得破坏 `@COORDINATOR` / `@<runnerName>` 必须位于控制评论末尾的规则。
 
 共享核心应保持短小，不复制整套 AGENTS，也不维护第二份项目工作方法。
 
@@ -78,7 +79,10 @@ Runner 只把已经过授权和路由校验的结构化身份写入消息。首�
 - Issue number / URL；
 - trigger source（Issue Body 或 Comment）及其可用 URL / id；
 - requester；
-- START / RESUME 类型。
+- START / RESUME 类型；
+- 固定 Logical Actor：`implementer`。
+
+Logical Actor 是轻量 attribution，不是权限字段；Runner 不允许从任意 GitHub 文本接受或覆盖该值。V1 不需要把 Actor 建成可配置 registry。
 
 不把任意 GitHub 文本直接拼成指令。触发 Body / Comment 的正文无需复制；当前命令本身只代表“开始 / 继续”。
 

@@ -29,7 +29,8 @@ Implementer 请求 Coordinator 时必须：
 1. 在原业务 Issue 回复，不新开协调 Issue；
 2. 说明争议、依据，并链接相关 PR / Review；
 3. 明确 return-to Runner，例如“处理完成后请交回 @MB01”；
-4. 评论 trim 后以 `@COORDINATOR` 结尾。
+4. 按 [Logical Actor Identity](07-logical-actor-identity.md) 在最终控制命令之前标记 `Actor: implementer`；
+5. 评论 trim 后以 `@COORDINATOR` 结尾。
 
 return-to 是显式交接信息。Coordinator 不根据评论作者、机器历史或其他隐含状态猜测。原 Implementer 若为 HZ01，就明确写“处理完成后请交回 @HZ01”。
 
@@ -41,10 +42,13 @@ Coordinator 被唤醒后自行读取原 Issue 最新决定、相关 PR / Review�
 
 Coordinator 可以在已经确认的 Requirement / Contract / ADR / Issue 决定范围内判断 Finding、解释现有规则并给出下一步，但不因承担协调角色自动取得 Maintainer 权限。
 
-能够继续时，Coordinator **自己使用 GitHub 能力**在原 Issue 发布结论，并以请求中明确的 return-to Runner 结尾，例如：
+能够继续时，Coordinator **自己使用 GitHub 能力**在原 Issue 发布结论。Coordinator 的 Logical Actor 固定为 `coordinator`，业务回写按 [Logical Actor Identity](07-logical-actor-identity.md) 增加可见 `Actor: coordinator` 标记；如果需要 return-to，该标记必须位于最终控制命令之前，并以请求中明确的 return-to Runner 作为 trim 后最后内容，例如：
 
 ```text
 ……协调结论与下一步……
+
+---
+Actor: coordinator
 
 @MB01
 ```

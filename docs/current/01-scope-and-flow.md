@@ -28,6 +28,8 @@ GitHub 通信统一复用实际运行账户已经认证的本机 `gh`。Runner �
 
 上述本机 `gh` 规则适用于 Runner / Implementer。Coordinator 通道按 [Coordinator 协调与交接 Contract](06-coordinator-handoff.md) 使用一个受控例外：本机程序经 Safari 控制正常登录的 ChatGPT Web 投递／续接 Coordinator conversation，ChatGPT 自己使用已连接的 GitHub connector 读取和回写目标仓库。Runner 不代理这些业务读写、不获取 ChatGPT / GitHub cookie 或 token；Coordinator connector 的实际写回身份以及 Implementer 的实际写回身份都必须被目标仓库 `allowedActors` 授权。
 
+GitHub authentication identity 与自动化业务角色分层见 [Logical Actor Identity](07-logical-actor-identity.md)：V1 不改变现有账户和认证，只让 Implementer / Coordinator 的业务评论显式标记自己的 Logical Actor；该标记不参与 `allowedActors` 或其他授权判断。
+
 ## 任务入口
 
 本地按配置周期检查已接入仓库的新增内容，不用 Actions 定时扫描，也不为每次空检查调用模型。读取增量而非反复重读全部 Issue；初次启动不把历史命令全部重放。

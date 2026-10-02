@@ -10,6 +10,7 @@ Current Version: 未编号（版本编号由维护者决定）
 - [本机配置与状态 Schema](04-local-state.md)
 - [Harness 并发与轮询调度](05-harness-scheduling.md)
 - [Coordinator 协调与交接](06-coordinator-handoff.md)
+- [自动化 GitHub 回写的 Logical Actor Identity](07-logical-actor-identity.md)
 - [开发环境与验证结果](../development.md)
 - [架构取舍](../decisions/README.md)
 
@@ -37,3 +38,5 @@ Harness 调度采用机器级 + 仓库级两级并发上限；一次 polling cyc
 Coordinator 的目标交接语义见 [Coordinator 协调与交接 Contract](06-coordinator-handoff.md)：Implementer 在原业务 Issue 显式写明 return-to Runner，并以 `@COORDINATOR` 交接；Coordinator 自行读取 GitHub 依据并自行回写原 Issue，能够继续时以该 return-to Runner 结尾。该 Contract 不表示 Coordinator / Safari 接入代码已经实现。
 
 Coordinator 通道是 Runner / Implementer“本机 `gh` + 无 Web 接入”规则的限定例外：本机只经 Safari 投递／续接正常 ChatGPT Web conversation，ChatGPT 自己使用已连接的 GitHub connector 读写 GitHub；两端实际写回身份都必须进入目标仓库 `allowedActors`。同一 Issue 的 Coordinator conversation 保持单写入者，运行中不注入第二条请求，结束后只取水位之后最新合法 `@COORDINATOR`。
+
+自动化业务评论的 GitHub authentication identity 与 Logical Actor 分层见 [Logical Actor Identity](07-logical-actor-identity.md)：V1 继续复用现有 GitHub 认证，只以可见 `Actor: implementer` / `Actor: coordinator` 标记区分角色；该标记不参与授权。带 `@COORDINATOR` / `@<runnerName>` 的控制评论仍必须让控制命令保持为 trim 后最后内容。
