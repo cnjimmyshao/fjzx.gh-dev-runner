@@ -51,7 +51,9 @@ Coordinator 评论明确说明它没有直接读取 MBP01 的原始 state / audi
 
 ### 1. 前序中断没有被冒充为成功
 
-D1 报告同时保留前序 START：`run-20261001-170137-ad8481` 已建立同一 `session-4b209aa1-…`，但以 exit code 130、outcome `harness_error`、`turnEnd=null` 结束，因此不能算正常完成；旧 D2 评论也没有重放。测试期间更早曾观察到 Harness / Dev 的 `PATH` 命中错误架构 Git，但现有证据不足以把整个 exit 130 归因于 Git，本文不作该因果断言。
+D1 报告同时保留前序 START：`run-20261001-170137-ad8481` 已建立同一 `session-4b209aa1-…`，但以 exit code 130、outcome `harness_error`、`turnEnd=null` 结束，因此不能算正常完成；旧 D2 评论也没有重放。
+
+Git 故障需分两层记录：[D2 控制评论](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/66#issuecomment-5936380569)说明更早的 `run-20261001-163839-b02e6d` 在 Runner 准备 worktree 时失败，尚未建立 session；维护者随后配置 `GIT_BIN` 再发布新的 D2。D2 真正 spawn 后，本机原 session 持久化记录的首轮 `tool/result`（seq 21，turn 1 / step 1）又记录 Dev Git 调用因错误架构失败（`Bad CPU type in executable`，退出 126）。后者说明仅修 Runner 的 `GIT_BIN` 不会修正 Harness 内继承的 `PATH`；原始正文与路径不公开。现有证据不足以把随后整个 exit 130 归因于 Git，本文不作该因果断言。
 
 ### 2. D3 精确触发第一次同 session RESUME
 
