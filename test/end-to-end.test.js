@@ -29,9 +29,7 @@ const gitBin = resolveGitBin();
  * 只有 GitHub 与 Harness 用本机替身（替身不代写 Runner 自己负责的输出）。
  */
 test('端到端：baseline → 评论触发 → worktree → Harness → 接单确认', {
-  skip: gitBin === null
-    ? '本机没有可用的 git'
-    : process.versions.node.split('.')[0] !== '24' && 'Runner 只支持 Node 24（engines.node = 24.x）',
+  skip: gitBin === null && '本机没有可用的 git',
 }, async () => {
   const root = tempDir('fjzx-e2e-');
   const fakeBin = path.join(root, 'bin');

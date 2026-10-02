@@ -78,7 +78,7 @@ export function buildHarnessEnv(config, parentEnv = process.env) {
 }
 
 /**
- * 组装调用命令。`.js` 入口用当前 Node 运行（Runner 本身受 engines.node=24.x 约束）。
+ * 组装调用命令。`.js` 入口用当前 Node 运行（Runner 本身受 engines.node=">=24" 约束）。
  * @param {{harness: {bin: string, profile: string}}} config
  * @param {string|null} sessionId
  */

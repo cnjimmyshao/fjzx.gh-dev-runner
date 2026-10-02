@@ -396,7 +396,7 @@ test('resolve-binding --take-ownership 由维护者显式迁移绑定', async ()
   }
 });
 
-test('--once 遇到读取失败时以非 0 退出，不静默吞掉错误', { skip: process.versions.node.split('.')[0] !== '24' && 'Runner 只支持 Node 24（engines.node = 24.x）' }, async () => {
+test('--once 遇到读取失败时以非 0 退出，不静默吞掉错误', async () => {
   const root = tempDir('fjzx-index-');
   try {
     const { envFile, stateDir, sourceDir } = writeEnv(root);
@@ -429,7 +429,7 @@ test('--once 遇到读取失败时以非 0 退出，不静默吞掉错误', { sk
   }
 });
 
-test('未登录 gh 时拒绝启动', { skip: process.versions.node.split('.')[0] !== '24' && 'Runner 只支持 Node 24（engines.node = 24.x）' }, async () => {
+test('未登录 gh 时拒绝启动', async () => {
   const root = tempDir('fjzx-index-');
   try {
     const { envFile } = writeEnv(root);
@@ -446,9 +446,7 @@ test('未登录 gh 时拒绝启动', { skip: process.versions.node.split('.')[0]
   }
 });
 
-test('本进程仍有运行在飞时不释放实例锁', {
-  skip: process.versions.node.split('.')[0] !== '24' && 'Runner 只支持 Node 24（engines.node = 24.x）',
-}, async () => {
+test('本进程仍有运行在飞时不释放实例锁', async () => {
   const root = tempDir('fjzx-index-');
   try {
     const { envFile, stateDir, sourceDir } = writeEnv(root);
@@ -518,7 +516,7 @@ test('本进程仍有运行在飞时不释放实例锁', {
   }
 });
 
-test('audit 与实例锁由入口管理', { skip: process.versions.node.split('.')[0] !== '24' && 'Runner 只支持 Node 24（engines.node = 24.x）' }, async () => {
+test('audit 与实例锁由入口管理', async () => {
   const root = tempDir('fjzx-index-');
   try {
     const { envFile, stateDir } = writeEnv(root);

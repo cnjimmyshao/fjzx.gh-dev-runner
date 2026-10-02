@@ -205,7 +205,7 @@ test('DSH_BIN 支持 PATH 命令名与 .js 入口', () => {
   }
 });
 
-test('checkEnvironment 要求 Node 24、存在的入口与源仓库目录', () => {
+test('checkEnvironment 要求 Node >=24、存在的入口与源仓库目录', () => {
   const dir = tempDir();
   try {
     const config = loadConfig({
@@ -220,8 +220,10 @@ test('checkEnvironment 要求 Node 24、存在的入口与源仓库目录', () =
       cwd: dir,
       envFile: path.join(dir, 'missing.env'),
     });
-    assert.throws(() => checkEnvironment(config, { nodeVersion: '26.8.1' }), /Node\.js 24/);
+    assert.throws(() => checkEnvironment(config, { nodeVersion: '22.20.0' }), /最低 Node\.js 版本为 24/);
+    assert.throws(() => checkEnvironment(config, { nodeVersion: '23.11.1' }), /最低 Node\.js 版本为 24/);
     checkEnvironment(config, { nodeVersion: '24.16.0' });
+    checkEnvironment(config, { nodeVersion: '26.8.1' });
     assert.ok(fs.existsSync(config.runtime.stateDir));
 
     const broken = loadConfig({
@@ -260,6 +262,13 @@ test('checkEnvironment 要求 Node 24、存在的入口与源仓库目录', () =
   } finally {
     cleanup(dir);
   }
+});
+
+test('package.json 与 package-lock.json 声明与启动校验一致的 Node 范围', () => {
+  const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  const lock = JSON.parse(fs.readFileSync(new URL('../package-lock.json', import.meta.url), 'utf8'));
+  assert.equal(pkg.engines.node, '>=24');
+  assert.equal(lock.packages[''].engines.node, '>=24');
 });
 
 test('repoSlug 不会让不同仓库的目录碰撞', () => {
