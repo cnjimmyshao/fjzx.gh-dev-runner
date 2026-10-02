@@ -15,7 +15,18 @@ Current Version: 未编号（版本编号由维护者决定）
 
 已确认方向是轻量、本地增量检查、多个项目和多台电脑独立配置。 Runner 的人工部署配置、运行状态与 Harness 持久化分层：`.env` 只保存 Runner 部署入口；`runtime.stateDir`（可配置，`.local/` 仅可作为示例／默认）保存 Runner state / bindings / logs；`DSH_HOME` 保存 Harness credentials / profiles / sessions。GitHub 通信复用执行账户已认证的本机 `gh`，Runner 不向 Harness 转发 `GH_TOKEN` / `GITHUB_TOKEN`。GitHub 通信复用本机 `gh`；执行侧使用本机模型 Key 直接启动 Harness headless CLI，按任务记录和续接持久化会话，过程通过终端／本机日志观察。首版不再依赖常驻 Web 服务、cookie 引导或原 Web 界面。
 
-V1 的程序交付形态也已确认：Runner 直接作为标准 Node.js 程序运行，**正式运行版本统一为 Node.js 24 LTS**，24.x 内允许正常补丁／安全更新；Node.js 是显式运行时依赖。实现建立最小 `package.json`、依赖锁文件以及真实可用的启动／测试命令，并在 `package.json` 的 `engines.node` 中把运行范围约束为 24.x。当前 Scope 不生成 Windows EXE、macOS／Linux 单文件二进制或安装器，也不引入 Node SEA、pkg、nexe 等打包链路；Git、`gh` 与 Harness CLI 继续作为本机外部依赖，不打入 Runner。若未来多机部署确实需要单文件分发，再通过独立 Issue／决定评估，不阻塞 V1 功能实现。
+V1 的程序交付形态已确认：Runner 直接作为标准 Node.js 程序运行，Node.js 是显式运行时依赖。实现建立最小 `package.json`、依赖锁文件以及真实可用的启动／测试命令。当前 Scope 不生成 Windows EXE、macOS／Linux 单文件二进制或安装器，也不引入 Node SEA、pkg、nexe 等打包链路；Git、`gh` 与 Harness CLI 继续作为本机外部依赖，不打入 Runner。若未来多机部署确实需要单文件分发，再通过独立 Issue／决定评估，不阻塞 V1 功能实现。
+
+### Node 运行范围
+
+本节修订由 [Issue #71](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/71) 跟进，**随其独立 documentation-only PR 合并生效**，替代 [Issue #43](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/43)／[PR #44](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/pull/44) 的 `24.x` 上限；未合并分支上的内容不覆盖 main 的有效规则。当前代码、锁文件和启动校验仍只允许 Node 24，后续实现与兼容验收另行交付；文档合并不等于这些工作完成。
+
+- 最低运行时为 **Node.js 24**；`engines.node` 与启动校验的目标范围统一为 **`>=24`**，拒绝低于 24 的主版本，不再仅因主版本高于 24 拒绝启动。
+- 正式部署推荐仍受官方支持的 Active LTS／Maintenance LTS，允许该发布线的正常补丁与安全更新；不固定某个 patch，不自动安装、升级或切换执行电脑的 Node。
+- **版本放行与实际验证分开。** `>=24` 是最低门槛，不是所有未来主版本、平台或外部 Harness 已验收的保证。每份验证记录具体 Node／Harness 版本、环境、通过／失败／跳过与未覆盖范围；新运行时实际出现不兼容时如实报告，不以版本号推断通过。
+- 文档合并后在 #71 继续独立 Implementation PR：同步 package／lock、启动校验和版本测试，使 Node 24／26 的完整入口与 E2E 用例实际执行；在明确授权的隔离会话核验当前 Harness 的 START／RESUME、JSONL 与退出状态。完成前 #71 保持开放。
+
+当前证据与限制见 [Node 运行时范围核验](../research/2026-10-02-node-runtime-range.md)；正式部署的 LTS 建议依据 [Node.js 官方发布说明](https://nodejs.org/en/about/previous-releases)。
 
 Harness 调度采用机器级 + 仓库级两级并发上限；一次 polling cycle 最多新增领取一个 Issue；`runtime.pollSeconds` 默认 300 秒并可配置；容量不足时不扫描／不消费新的触发候选；Runner 重启后无法确认旧 Harness 已退出时保守占槽。具体见 [Harness 并发与轮询调度](05-harness-scheduling.md)。
 
