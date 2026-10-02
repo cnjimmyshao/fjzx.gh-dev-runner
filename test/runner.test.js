@@ -143,6 +143,7 @@ test('Issue Body 是命令时一次性领取：水位、binding 与 starting 在
     assert.equal(record.binding.sessionId, 'session-1');
     assert.equal(record.binding.runnerName, 'MB01');
     assert.equal(record.binding.dir, ctx.workdir.prepared[0].repository.worktreeDir + '/issue-9');
+    assert.equal(record.binding.createdAt, record.lastTrigger.at, 'START 以本次 claim 时间创建 binding');
 
     const run = Object.values(ctx.store.read().activeRuns)[0];
     assert.equal(run.status, 'exited');
@@ -575,8 +576,57 @@ test('RESUME 保持同一 session 与同一工作目录', async () => {
     assert.equal(ctx.harness.launches[0].dir, dir);
     assert.match(ctx.harness.launches[0].task, /\[RESUME\]/);
     assert.equal(issueRecord(ctx.store, 7).binding.sessionId, 'session-old');
+    assert.equal(
+      issueRecord(ctx.store, 7).binding.createdAt,
+      '2026-09-29T00:00:00.000Z',
+      'RESUME 保留原 binding 创建时间',
+    );
   } finally {
     cleanup(ctx.stateDir);
+  }
+});
+
+test('RESUME 为缺失或 null createdAt 的旧 binding 使用本次 claim 时间', async () => {
+  for (const legacyCreatedAt of [undefined, null]) {
+    const ctx = await setup({
+      script: {
+        listIssuesSince: () => ({ items: [makeIssue({ number: 7 })], truncated: false }),
+        listComments: () => ({ items: [makeComment({ id: 40, body: '继续 @MB01' })], truncated: false }),
+      },
+    });
+    try {
+      const binding = {
+        runnerName: 'MB01',
+        dir: `${ctx.config.repositories[0].worktreeDir}/issue-7`,
+        sessionId: 'session-old',
+        branch: 'fjzx/issue-7',
+        source: ctx.config.repositories[0].sourceDir,
+        worktreeCreated: true,
+      };
+      if (legacyCreatedAt === null) binding.createdAt = null;
+
+      await seedRepository(ctx.store);
+      await seedIssue(ctx.store, 7, {
+        issueBodyHandled: true,
+        commentScanWatermark: '10',
+        commentScanWatermarkAt: '2026-09-30T00:00:00.000Z',
+        binding,
+      });
+
+      await ctx.runner.runCycle();
+      await waitForIdle(ctx.runner);
+
+      const record = issueRecord(ctx.store, 7);
+      assert.equal(ctx.harness.launches[0].kind, 'resume');
+      assert.equal(record.binding.sessionId, 'session-old');
+      assert.equal(
+        record.binding.createdAt,
+        record.lastTrigger.at,
+        `legacy createdAt=${String(legacyCreatedAt)} 时回退到本次 claim 时间`,
+      );
+    } finally {
+      cleanup(ctx.stateDir);
+    }
   }
 });
 

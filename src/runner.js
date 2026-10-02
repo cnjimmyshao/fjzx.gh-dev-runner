@@ -646,7 +646,7 @@ export function createRunner(deps) {
           branch,
           source,
           worktreeCreated: kind === 'resume' ? Boolean(existingBinding.worktreeCreated) : false,
-          createdAt: claimedAt,
+          createdAt: kind === 'resume' ? (existingBinding.createdAt ?? claimedAt) : claimedAt,
         };
         record.lastRun = {
           at: claimedAt,
