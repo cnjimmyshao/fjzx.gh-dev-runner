@@ -143,6 +143,32 @@ test('loadConfig 拒绝非法取值', () => {
   assert.throws(() => load({ DSH_BIN: '' }), ConfigError);
 });
 
+test('loadConfig 拒绝 COORDINATOR 保留名，但不误伤合法近似名称', () => {
+  const dir = tempDir();
+  const base = {
+    STATE_DIR: path.join(dir, 'state'),
+    DSH_BIN: '/bin/echo',
+    REPOSITORIES_JSON: JSON.stringify([
+      { repo: 'owner/a', allowedActors: ['alice'], sourceDir: dir, worktreeDir: path.join(dir, 'wt') },
+    ]),
+  };
+  const load = (runnerName) =>
+    loadConfig({
+      env: { ...base, RUNNER_NAME: runnerName },
+      cwd: dir,
+      envFile: path.join(dir, 'missing.env'),
+    });
+
+  try {
+    assert.throws(() => load('COORDINATOR'), /COORDINATOR.*保留/);
+    for (const runnerName of ['MBP01', 'HZ01', 'COORDINATOR-1', 'MY-COORDINATOR']) {
+      assert.equal(load(runnerName).runnerName, runnerName);
+    }
+  } finally {
+    cleanup(dir);
+  }
+});
+
 test('HARNESS_ENV_ALLOWLIST 不得转发 GitHub 凭据', () => {
   const dir = tempDir();
   const base = {
