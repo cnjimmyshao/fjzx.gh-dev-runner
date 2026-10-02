@@ -33,7 +33,7 @@ node src/index.js resolve-binding --repo owner/name --issue <n> --take-ownership
 
 实例锁只用 `wx` 独占创建：锁文件已存在就拒绝启动，不判断 stale、不自动删除、不自动接管。异常退出遗留锁属于低频维护事件，维护者确认没有 Runner 在运行后人工删除，再重新启动。Runner 与 `resolve-*` 都先取得实例锁、再加载 `state.json`。`--once` 会等本轮领取的 Harness 结束后再退出（收到 `SIGINT` / `SIGTERM` 时只等最多 5 秒，之后退出并把在跑的 Harness 交给下次启动按恢复语义接管）。`resolve-run` / `resolve-session` / `resolve-binding` 都会写 `manual_resolution` 审计（动作、坐标、是否记录或清除 session），因此长期历史里能回查是谁何时释放了 unknown 槽位、确认了 session 或迁移了 Runner。`resolve-run --outcome running` 只在记录里已有可核对 `pid` 时成立：没有进程身份的 `running` 会在下次启动被恢复逻辑归一为 `unknown`，而 `unknown` 同样占槽，所以这种情况明确拒绝并保留 `unknown`（被拒绝的恢复不写盘、也不写审计）。`resolve-run --outcome exited` 表示维护者确认该运行已经结束：释放槽位后同时按 `CAPTURE` 收敛它的捕获（模型正文与 stderr 不长期保留，与正常结算、孤儿恢复同一实现）；`--outcome running` 表示该运行仍在写文件，不做收敛。`resolve-session --no-session` 表示维护者确认该任务没有可续接的 session（清除 `binding.sessionId` 与不明确标记），`resolve-binding --take-ownership` 表示维护者明确把绑定迁移到本机 Runner（目录 / 分支按本机配置重新派生、不续接原机器 session）。
 
-测试与运行都要求在 Node 24 下执行（`engines.node = 24.x`，启动时校验；其他 Node 主版本会明确拒绝启动，测试套件中的端到端用例也会因此失败而不是静默跳过）。
+**当前实现**的测试与运行仍使用 Node 24（`engines.node = 24.x`，启动时校验；其他 Node 主版本会明确拒绝启动）。测试套件实际会跳过其他主版本下的 1 个 E2E 与 4 个入口用例，因此非 24 下的零失败不代表完整通过。最低 Node 24、允许 `>=24` 的候选规则见 [Current](current/README.md#node-运行范围issue-71-候选修订) 与 [Issue #71](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/71)；先合并独立文档 PR，再通过独立实现 PR 修改 package／lock、启动校验和测试，不提前把候选规则写成已实现。
 
 `--env <path>` 可指定 `.env` 之外的部署配置；同名进程环境变量覆盖文件取值（只认 [配置模块](../src/config.js) 列出的键）。`HARNESS_ENV_ALLOWLIST` 只允许非 GitHub 变量：`GH_TOKEN` / `GITHUB_TOKEN` 等保留变量会被直接拒绝，Runner 不向 Harness 转发 GitHub 凭据。`DSH_BIN` 可以是不含分隔符的命令名（按 `PATH` 解析），`.js` 入口由 Runner 自己的 Node 24 进程启动。启动前校验 Node 24、`DSH_BIN`、各仓库 `sourceDir`、`worktreeDir` 与 `gh auth status`，任一项不成立即拒绝启动；`.env.example` 与实现一致。
 
@@ -69,7 +69,7 @@ node src/index.js resolve-binding --repo owner/name --issue <n> --take-ownership
 
 ## V1 运行与分发口径
 
-V1 直接以标准 Node.js 程序运行，不把 Runner 打包成单文件可执行程序。**正式运行版本统一为 Node.js 24 LTS**；24.x 内允许正常补丁／安全更新，不把某个 patch 版本写死为 Contract。Node.js 作为明确的本机运行时依赖；Runner 自身通过 `package.json`、依赖锁文件和正常的启动／测试命令交付，首次实现时在 `package.json` 的 `engines.node` 中约束为 24.x。Git、已登录的 GitHub CLI（`gh`）与 Harness CLI 仍按各自方式在本机准备，不嵌入 Runner，也不因分发方便新增凭据封装。
+V1 直接以标准 Node.js 程序运行，不把 Runner 打包成单文件可执行程序。首次实现按 #43／#44 以 **Node.js 24 LTS** 为运行线，`engines.node` 与启动校验目前仍约束为 24.x。#71 提出的候选修订以 Node 24 为最低门槛、拟允许 `>=24` 并推荐受支持 LTS；具体目标与生效条件以 [Current](current/README.md#node-运行范围issue-71-候选修订) 为准，实际已验证版本以带日期的 [Research](research/2026-10-02-node-runtime-range.md) 为准，不混同这三种状态。Node.js 作为明确的本机运行时依赖；Runner 自身通过 `package.json`、依赖锁文件和正常的启动／测试命令交付。Git、已登录的 GitHub CLI（`gh`）与 Harness CLI 仍按各自方式在本机准备，不嵌入 Runner，也不因分发方便新增凭据封装。
 
 当前不建设 Windows EXE、macOS／Linux 单文件二进制、安装器、自动更新器或 Node SEA／pkg／nexe 等打包链路。以后若多台执行电脑的实际部署成本证明单文件分发有价值，再单独开 Issue 评估支持平台、发布方式和升级策略；该未来选择不作为当前 Runner 功能开发的前置条件，也不要求现在为打包预留额外抽象。
 
