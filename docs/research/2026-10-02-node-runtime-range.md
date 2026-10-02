@@ -1,7 +1,7 @@
 # Node 运行时范围核验
 
-Date: 2026-10-02（Asia/Shanghai）  
-Keywords: Node.js, engines, version guard, LTS, compatibility, Issue #71  
+Date: 2026-10-02（Asia/Shanghai）
+Keywords: Node.js, engines, version guard, LTS, compatibility, Issue #71
 Status: VERIFIED（仅限下面记录的源码、测试与元数据范围）
 
 ## 调查问题
