@@ -15,6 +15,7 @@
 - [本机 Harness CLI 首轮执行与同会话续接验证](2026-09-23-local-harness-cli-first-run-and-resume.md)：本机 0.1.5-rc.2 的 headless 单轮执行可用，但该版本自身无 `--session-id` / `--json`；用 profile patch 挂本地 runner 后已实测跨进程续接，脚本在 `scripts/headless-session/`。
 - [START 阶段 sessionId 的创建与可见时点实测](2026-09-24-start-sessionid-visibility.md)：会话在进程启动后约 1.5–1.7s（热 profile）创建；本地 runner 只在整轮结束的最终结果里交付 `sessionId`，官方 headless 在本机 0.1.5-rc.2 完全不给，两者之间存在真实的「已创建但调用方不可见」窗口。
 - [共享 DSH_HOME 的多 Harness 并发与单 session 单写入实测](2026-09-29-shared-dsh-home-concurrency.md)：本机安装已是 `@deepseek-ai/dsh` 0.2.0-rc.2（Node v24.16.0，macOS）；同一 `DSH_HOME` 下 2／4 个进程的不同 session 与不同（或相同）工作目录可并发，冷 home 首次初始化 2／6 进程竞争也通过；同一 session 的第二写入者被 Harness 自身的内核写锁明确拒绝（退出 1、结构化错误、被拒进程 0 事件），强杀不留悬挂锁且后继进程可继续 resume，12 个会话日志全部可完整解码——所测范围内不需要按任务／进程隔离 home。
+- [真实 GitHub / MBP01 / 外部 Coordinator 受控 E2E](2026-10-02-github-mbp01-coordinator-e2e.md)：Issue #66 的真实评论触发、同 session / worktree RESUME、外部 dot Coordinator 唯一 return-to、最终 `run_end` 与维护者 PASS；只证明单机的一次受控往返。
 
 原 Web 接入实验未并入本分支，其报告留在 [PR #4](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/pull/4) 与 Issue #3 供追溯，保留其时间点证据，不作为 CLI 已验证的依据。
 

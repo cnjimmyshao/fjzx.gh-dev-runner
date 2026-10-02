@@ -34,7 +34,7 @@ GitHub 通信统一复用实际运行账户已经认证的本机 `gh`。Runner �
 
 每台 Runner 在本机配置自己的 `runnerName`。V1 一个 Issue 的当前 task binding 只归一个 Runner，不让多台机器同时处理同一 Issue；换 Runner 必须由维护者明确迁移绑定。新建 Issue 时只检查一次授权主体的初始 Issue Body；进入评论阶段后，只在该 Issue **没有正在运行的 Harness** 时扫描水位之后的新评论，把水位推进到本轮扫描终点，并只选择其中最新一条由授权主体发布、非 `BOT:<runnerName>` 且正文 trim 后以 `@<runnerName>` 结尾的有效控制评论。普通讨论、未授权评论和 Runner 自动反馈只推进扫描进度，不覆盖合法控制评论；多条有效控制评论只执行最新一条。运行中的 Issue 直接跳过，不读取它的新评论、不推进它的触发水位；当前 Harness 结束后，下一次轮询才扫描水位之后的新评论，并只取其中最新一条有效控制评论。完整规则见 [Runner 激活与任务触发 Contract](03-runner-trigger.md)。
 
-示意链路（尚未实现）：
+Runner → Harness 主链路示意（当前已实现；仓库内 Coordinator / Safari 接入仍属于本文末尾列出的后续实现）：
 
 ```text
 新建 Issue：检查一次授权主体的初始 Body

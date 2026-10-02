@@ -6,7 +6,7 @@
 
 V1 最小闭环已按 [Issue #48](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/48) 在当前 main 上实现：Runner 是普通 Node.js 程序，带最小 `package.json`、零运行时依赖、`npm test`（`node --test`）与 `npm start`。实现位于 `src/`，测试位于 `test/`。
 
-本机验证状态见下面「验证分层与本次证据」。要点：Node **24.16.0** 下完整 `npm test` 通过；真实 `gh`、真实 `git` 与本机 `dsh` 的失败路径已实测；**尚未**用真实模型凭据跑通一次完整 Harness → Dev 轮次，也**尚未**实测多机与真实并发 Harness。
+本机验证状态见下面「验证分层与本次证据」。要点：Node **24.16.0** 下完整 `npm test` 通过；真实 `gh`、真实 `git` 与本机 `dsh` 的失败路径已实测；截至 2026-10-02，[Issue #66 的受控真实 E2E](research/2026-10-02-github-mbp01-coordinator-e2e.md) 又完成了一次真实 GitHub 控制评论、MBP01 Runner、原 DSH session、外部 dot Coordinator、一次 return-to、同 session RESUME 与正常 `run_end` 的闭环。该结果仍不覆盖仓库内 Coordinator / Safari 实现、真实 PR Review、多轮／多机或完整 Node 26 兼容。
 
 接单工具采用 Node.js。首次代码 PR 已建立最小 `package.json`、锁文件与真正可运行的测试命令，没有铺空模块或假测试。工具自身的 Node.js 进程不是本地模型推理服务。
 
@@ -39,6 +39,8 @@ node src/index.js resolve-binding --repo owner/name --issue <n> --take-ownership
 
 `--env <path>` 可指定 `.env` 之外的部署配置；同名进程环境变量覆盖文件取值（只认 [配置模块](../src/config.js) 列出的键）。`HARNESS_ENV_ALLOWLIST` 只允许非 GitHub 变量：`GH_TOKEN` / `GITHUB_TOKEN` 等保留变量会被直接拒绝，Runner 不向 Harness 转发 GitHub 凭据。`DSH_BIN` 可以是不含分隔符的命令名（按 `PATH` 解析），`.js` 入口由 Runner 自己的 Node 24 进程启动。启动前校验 Node 24、`DSH_BIN`、各仓库 `sourceDir`、`worktreeDir` 与 `gh auth status`，任一项不成立即拒绝启动；`.env.example` 与实现一致。
 
+`GIT_BIN` 的作用域只有 Runner 自己准备／校验任务 worktree 时执行的 `git`：配置值被传给 `workdir` 模块，但不会改写 Harness 子进程的 `PATH`，也不会替 Harness / Dev 选择 `git` 或 `gh`。Harness 继承 Runner 启动环境里的最小系统变量，其中包括 `PATH`；Dev 在 Harness 内调用的 `git` / `gh` 仍按该 `PATH` 解析。因此，若 `GIT_BIN` 指向可用 Git、但 Runner 服务进程的 `PATH` 仍先命中错误架构或不可用的 Git，worktree 操作可以成功而 Dev 内的 Git 仍会失败。部署时须分别核对 Runner 的 `GIT_BIN` 与同一服务启动环境的 `PATH`；设置前者不能代替修正后者。
+
 模块职责：[`config`](../src/config.js) 配置解析与校验；[`state`](../src/state.js) 条件式原子状态与容量记账；[`github`](../src/github.js) `gh` 调用与分页；[`trigger`](../src/trigger.js) Body / 评论候选语义的纯函数；[`workdir`](../src/workdir.js) 每 Issue 独立 worktree；[`prompt`](../src/prompt.js) START / RESUME 消息；[`harness`](../src/harness.js) 官方 headless 调用与 `--json` 判读；[`runner`](../src/runner.js) 轮询、领取临界区与最小反馈；[`index`](../src/index.js) 入口与人工恢复命令。
 
 ## 首次实现记录的五项取舍
@@ -50,6 +52,19 @@ node src/index.js resolve-binding --repo owner/name --issue <n> --take-ownership
 5. **续接时的分支漂移不阻断。** Runner 只在首次 START 时创建 `fjzx/issue-<n>` worktree；Dev 按目标项目规则另开任务分支（例如 `feat/issue-48-...`）是正常路径，因此 RESUME 遇到“当前 HEAD 与绑定分支不同”时只记本机警告、审计 `workdir_branch_drift` 并在运行记录里留下 `currentBranch`，不停止本轮。真正属于“错误 checkout”的情况——目录不再是配置源仓库的 worktree、目录被替换成非 worktree——仍然硬失败（`worktree_source_mismatch` / `task_dir_not_worktree`）。如果维护者希望分支不等也停止，只需把该判定改成与目录校验同级的失败。
 
 ## 验证分层与本次证据
+
+### 2026-10-02：真实 GitHub / Harness / 外部 Coordinator 受控 E2E
+
+[带日期的 Research 报告](research/2026-10-02-github-mbp01-coordinator-e2e.md)记录了 Issue #66 的公开评论链与维护者核对的本机 append-only audit。结果是在 MBP01 上完成一次受控闭环：新 D3 评论触发 `run-20261001-171345-c8a140` 以 RESUME 续接原 session；D1 正常 `run_end` 后，外部 dot Coordinator 给出技术判断并发布唯一一次末尾为 `@MBP01` 的 return-to；Runner 后续轮询精确领取该 return-to，启动新的 `run-20261001-172621-de2f03`，复用同一 session、同一规范化任务 worktree 与分支，并以 exit 0、`turn_completed`、`turnEnd=completed`、`timedOut=false` 结束。维护者随后在原 Issue 给出最终 PASS 收尾。
+
+这次验收必须分两步读证据：
+
+1. Harness 内发布的 GitHub 结果评论证明该轮已经执行到回报动作，但评论发生时子进程可能仍未退出；Issue #66 的最终报告就明确写着当时尚无本轮 `run_end`。
+2. 评论发布后继续核对同一 `runId` 的 `run_end`，只有其 exit code、outcome、`turnEnd`、`timedOut` 与结束时间均符合预期，才算本轮技术调用正常收尾。`runner_stopped` 只表示 Runner 进程后来停止，职责不同：专项一次性测试可以核对它是否按计划退出，常驻 Runner 无需也不应为了每轮验收而停止。
+
+本次只证明单机、单 Issue、一次受控 Coordinator 往返。外部 dot Coordinator 的成功不表示仓库内 Coordinator / Safari 接入已经实现；没有覆盖真实 PR Review / 修复、多轮或无限往返、多机路由／并发，也不把这次运行外推为完整 Node 26 兼容。
+
+### 2026-09-30：首次实现验证快照（历史）
 
 本次（2026-09-30，本机执行电脑，macOS / arm64）实际执行的验证：
 
