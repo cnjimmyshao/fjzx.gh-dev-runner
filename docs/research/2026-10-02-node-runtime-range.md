@@ -32,7 +32,7 @@ Status: VERIFIED（仅限下面记录的源码、测试与元数据范围）
 | 24.16.0 | 113 | 113 | 0 | 0 | 当前完整单元／集成／替身 E2E 套件通过 |
 | 26.8.1 | 113 | 108 | 0 | 5 | 其余用例通过；1 个 E2E 与 4 个入口用例未执行 |
 
-真实 Node 24 Runner／Harness 的受控闭环另见 [#66 收尾证据](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/66#issuecomment-5943382231)。真实 Git 故障发生在 Node 24 下，来自 Harness 继承的 `PATH` 选中不可用 Git，不能转记为 Node 26 缺陷。
+真实 Node 24 Runner／Harness 的受控闭环另见 [#66 收尾证据](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/66#issuecomment-5943382231)。需区分两次 Git 故障：[D2 控制评论](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/66#issuecomment-5936380569)记录更早的 Runner worktree 准备失败，随后以 `GIT_BIN` 固定可用 Git；D2 实际 spawn 后，同 session 的本机持久化记录又显示 Dev 首条 Git 调用命中不可用 Git（`Bad CPU type in executable`，退出 126），这才是 Harness 继承 `PATH` 的边界。两次都发生在 Node 24 下，不能转记为 Node 26 缺陷，也不能把后续 exit 130 全部归因于 Git。
 
 ## Conclusion
 
@@ -42,4 +42,4 @@ Status: VERIFIED（仅限下面记录的源码、测试与元数据范围）
 
 ## Contract Impact
 
-#71 的 documentation-only PR 拟将最低门槛与已验证矩阵分开。该 PR Review／Merge 前，main 的有效规则与实现仍为 Node 24.x；合并后须另交付 Implementation PR 和兼容验证，不能把文档合并当作完成实现。最终验证完成前 #71 保持开放。
+#71 的 documentation-only PR 将最低门槛与已验证矩阵分开，规则修订随该 PR 合并生效。本文核验时文档 PR 尚未合并，main 的有效规则与实现仍为 Node 24.x；合并后须另交付 Implementation PR 和兼容验证，不能把文档合并当作完成实现。最终验证完成前 #71 保持开放。

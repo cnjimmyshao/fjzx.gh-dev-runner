@@ -32,7 +32,7 @@ npm test                 # Node 24 下运行全部测试
 
 Runner 直接以 Node.js 24 运行，没有运行时依赖与安装脚本，也不打包成单文件可执行程序；`scripts/headless-session/` 是 0.1.5-rc.2 时期的一次性验证脚本，不是 Runner 的运行路径。外部 Review 集成是否已启用需另行核验，不能据此声称环境已就绪。
 
-[Issue #71](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/71) 正在 Review「最低 Node 24、允许 `>=24`、推荐受支持 LTS」的[候选规则](docs/current/README.md#node-运行范围issue-71-候选修订)。本 PR 只交付文档；当前版本限制未变，Node 26 的部分测试通过也不是完整兼容证明。文档合并后再做独立实现与验证。
+「最低 Node 24、允许 `>=24`、推荐受支持 LTS」的[规则修订](docs/current/README.md#node-运行范围)由 [Issue #71](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/71) 跟进，随独立文档 PR 合并生效。当前代码仍只允许 24.x，后续独立实现与兼容验收尚未完成；Node 26 的部分测试通过不是完整兼容证明。
 
 ## 公开仓库与本机数据
 

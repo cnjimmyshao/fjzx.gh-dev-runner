@@ -17,9 +17,9 @@ Current Version: 未编号（版本编号由维护者决定）
 
 V1 的程序交付形态已确认：Runner 直接作为标准 Node.js 程序运行，Node.js 是显式运行时依赖。实现建立最小 `package.json`、依赖锁文件以及真实可用的启动／测试命令。当前 Scope 不生成 Windows EXE、macOS／Linux 单文件二进制或安装器，也不引入 Node SEA、pkg、nexe 等打包链路；Git、`gh` 与 Harness CLI 继续作为本机外部依赖，不打入 Runner。若未来多机部署确实需要单文件分发，再通过独立 Issue／决定评估，不阻塞 V1 功能实现。
 
-### Node 运行范围（Issue #71 候选修订）
+### Node 运行范围
 
-以下规则由 [Issue #71](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/71) 提交 Review，**本 documentation-only PR 合并后才成为实现依据**，拟替代 [Issue #43](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/43)／[PR #44](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/pull/44) 的 `24.x` 上限。当前代码、锁文件和启动校验仍只允许 Node 24；文档合并不等于实现或兼容验收完成。
+本节修订由 [Issue #71](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/71) 跟进，**随其独立 documentation-only PR 合并生效**，替代 [Issue #43](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/43)／[PR #44](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/pull/44) 的 `24.x` 上限；未合并分支上的内容不覆盖 main 的有效规则。当前代码、锁文件和启动校验仍只允许 Node 24，后续实现与兼容验收另行交付；文档合并不等于这些工作完成。
 
 - 最低运行时为 **Node.js 24**；`engines.node` 与启动校验的目标范围统一为 **`>=24`**，拒绝低于 24 的主版本，不再仅因主版本高于 24 拒绝启动。
 - 正式部署推荐仍受官方支持的 Active LTS／Maintenance LTS，允许该发布线的正常补丁与安全更新；不固定某个 patch，不自动安装、升级或切换执行电脑的 Node。
