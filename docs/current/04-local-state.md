@@ -17,7 +17,7 @@ Runner **不复制 Harness 会话历史**，也不把 Issue 全文、PR 内容�
 
 ## 配置 JSON 的稳定语义
 
-接单运行代码尚未实现，当前仓库不把任何未合并实现 PR 中的配置示例当成现行事实。Current 固定的是下面这些配置类别及其责任；具体 JSON 示例由后续实现 PR 在遵守本 Contract 的前提下提供。
+接单运行代码已按 [Issue #48](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/48) 合并，当前 `.env` 入口与实际键见仓库 [`.env.example`](../../.env.example) 及[开发说明](../development.md)。Current 在下面固定的是配置类别及其责任，表中的逻辑名称不要求与环境变量名逐字相同，也不冻结未来实现 Schema。
 
 | 字段／类别 | 语义 |
 | --- | --- |
@@ -51,7 +51,7 @@ repository identity + Issue number
 
 不能只用 Issue number。不同仓库都可能存在 `#1`、`#9` 等相同编号，状态必须彼此隔离。
 
-V1 Contract 采用下面的逻辑形状表达需要持久化的信息；接单实现尚未合并，因此这不是“已部署文件”的描述：
+V1 当前实现已持久化下面这些信息；这里仍以 Contract 的逻辑形状表达责任边界，不把示意图当成已部署 `state.json` 的逐字段转录：
 
 ```text
 activeRuns
@@ -76,11 +76,11 @@ repositories
         └── lastRun
 ```
 
-这是 V1 的目标存储形状；稳定 Contract 是“仓库身份 + Issue 编号”的复合主键，以及能够恢复活跃 Harness 运行态，而不是要求未来永远使用同样的嵌套对象布局。
+这是 V1 已实现持久化语义的逻辑示意；稳定 Contract 是“仓库身份 + Issue 编号”的复合主键，以及能够恢复活跃 Harness 运行态，而不是要求未来永远使用同样的嵌套对象布局。
 
 ## state.json v1 示例
 
-以下示例展示 V1 Contract 需要表达的主要信息。路径、session、PID 和时间均为占位值；后续实现可以在不破坏稳定语义的前提下调整内部字段名：
+以下示例展示 V1 Contract 需要表达的主要信息。路径、session、PID 和时间均为占位值；当前及后续实现都可以在不破坏稳定语义的前提下调整内部字段名：
 
 ```json
 {

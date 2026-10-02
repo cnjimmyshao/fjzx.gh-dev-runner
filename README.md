@@ -2,7 +2,7 @@
 
 轻量、可部署在不同执行电脑上的 GitHub Issue 接单与 DeepSeek Harness 会话续接工具。
 
-**当前阶段：V1 最小闭环已按 [Issue #48](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/48) 在当前 main 上实现（`src/`，Node.js 24 LTS，`npm start` / `npm test`），本机验证状态见 [开发环境与验证](docs/development.md)。尚未用真实模型凭据跑通一次完整 Runner → Harness → Dev 轮次，也尚未部署或接管真实开发任务。**
+**当前阶段：V1 最小闭环已按 [Issue #48](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/48) 在当前 main 上实现（`src/`，Node.js 24 LTS，`npm start` / `npm test`）。[Issue #66 的受控真实 E2E](docs/research/2026-10-02-github-mbp01-coordinator-e2e.md) 已验证一次 GitHub → MBP01 Runner → 原 DSH session → 外部 dot Coordinator → 一次性 return-to → 同 session RESUME → 正常 `run_end`；这不代表仓库内 Coordinator / Safari 接入、真实 PR Review、多轮／多机运行或完整 Node 26 兼容已经验证。当前证据分层见 [开发环境与验证](docs/development.md)。**
 
 ## 目标
 
@@ -21,6 +21,7 @@ DeepSeek 模型 API Key 在本机配置并保存，由 Harness 用于模型调�
 - [开发环境与验证](docs/development.md)：运行方式、`.env` 配置、验证分层与本次实际证据。
 - [CLI 本机验证报告](docs/research/2026-09-23-local-harness-cli-first-run-and-resume.md)：实际版本、实测结果与遗留取舍。
 - [共享 DSH_HOME 并发实测](docs/research/2026-09-29-shared-dsh-home-concurrency.md)：官方 headless 的并发与单 session 单写入证据。
+- [真实 GitHub / MBP01 / 外部 Coordinator 受控 E2E](docs/research/2026-10-02-github-mbp01-coordinator-e2e.md)：同 session 续接、一次 return-to、最终 `run_end` 与验收边界。
 
 开发入口是关联 Issue。Issue 保存问题与决定，PR 交付变更；读取仓库规则后按任务执行，不依赖聊天里另发一份长提示词。
 
