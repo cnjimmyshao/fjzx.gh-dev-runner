@@ -2,7 +2,7 @@
 
 轻量、可部署在不同执行电脑上的 GitHub Issue 接单与 DeepSeek Harness 会话续接工具。
 
-**当前阶段：V1 最小闭环已按 [Issue #48](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/48) 在当前 main 上实现（`src/`，Node.js 24 LTS，`npm start` / `npm test`）。[Issue #66 的受控真实 E2E](docs/research/2026-10-02-github-mbp01-coordinator-e2e.md) 已验证一次 GitHub → MBP01 Runner → 原 DSH session → 外部 dot Coordinator → 一次性 return-to → 同 session RESUME → 正常 `run_end`；这不代表仓库内 Coordinator / Safari 接入、真实 PR Review、多轮／多机运行或完整 Node 26 兼容已经验证。当前证据分层见 [开发环境与验证](docs/development.md)。**
+**当前阶段：V1 最小闭环已按 [Issue #48](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/48) 在当前 main 上实现（`src/`，Node.js ≥24，`npm start` / `npm test`）。[Issue #66 的受控真实 E2E](docs/research/2026-10-02-github-mbp01-coordinator-e2e.md) 已验证一次 GitHub → MBP01 Runner → 原 DSH session → 外部 dot Coordinator → 一次性 return-to → 同 session RESUME → 正常 `run_end`；这不代表仓库内 Coordinator / Safari 接入、真实 PR Review 或多轮／多机运行已经验证；Node 24／26 的完整测试与隔离 Harness START／RESUME 验证见 [Node 24／26 实现与兼容验证](docs/research/2026-10-02-node24-26-implementation-verification.md)。当前证据分层见 [开发环境与验证](docs/development.md)。**
 
 ## 目标
 
@@ -30,16 +30,16 @@ cp .env.example .env     # 填写 RUNNER_NAME / REPOSITORIES_JSON / STATE_DIR / 
 npm run help             # 显示帮助；等价于 npm start -- --help
 npm start                # 常驻轮询
 npm run once             # 只跑一轮，并等本轮启动的 Harness 结束
-npm test                 # Node 24 下运行全部测试
+npm test                 # Node 24 或更高版本下运行全部测试
 ```
 
 `npm run once` 执行 `node src/index.js --once`。`--wait` 仅为兼容旧命令保留，不会改变运行或等待行为，也不需要与 `--once` 搭配。
 
 其他 CLI 参数通过 npm 的 `--` 透传，例如 `npm run once -- --env <path>`。`npm test`／`npm run test` 运行 Node 测试框架，不是 `index.js` 的子命令。
 
-Runner 直接以 Node.js 24 运行，没有运行时依赖与安装脚本，也不打包成单文件可执行程序；`scripts/headless-session/` 是 0.1.5-rc.2 时期的一次性验证脚本，不是 Runner 的运行路径。外部 Review 集成是否已启用需另行核验，不能据此声称环境已就绪。
+Runner 直接以 Node.js 24 或更高版本运行，没有运行时依赖与安装脚本，也不打包成单文件可执行程序；`scripts/headless-session/` 是 0.1.5-rc.2 时期的一次性验证脚本，不是 Runner 的运行路径。外部 Review 集成是否已启用需另行核验，不能据此声称环境已就绪。
 
-「最低 Node 24、允许 `>=24`、推荐受支持 LTS」的[规则修订](docs/current/README.md#node-运行范围)由 [Issue #71](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/71) 跟进，随独立文档 PR 合并生效。当前代码仍只允许 24.x，后续独立实现与兼容验收尚未完成；Node 26 的部分测试通过不是完整兼容证明。
+「最低 Node 24、允许 `>=24`、推荐受支持 LTS」的[规则修订](docs/current/README.md#node-运行范围)由 [Issue #71](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/71) 跟进，已随独立文档 PR 合并生效。后续 Implementation PR 已把 `package.json`／lock 的 `engines.node` 与启动校验同步为 `>=24`，Node 24／26 的完整入口与 E2E 用例均实际执行，隔离 Harness START／RESUME 验证见 [Node 24／26 实现与兼容验证](docs/research/2026-10-02-node24-26-implementation-verification.md)。放行某主版本不等于所有未来主版本、平台或外部 Harness 已验收。
 
 ## 公开仓库与本机数据
 

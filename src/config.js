@@ -264,9 +264,10 @@ function parseRepositories(value, context) {
  */
 export function checkEnvironment(config, deps = {}) {
   const nodeVersion = deps.nodeVersion ?? process.versions.node;
-  if (nodeVersion.split('.')[0] !== '24') {
+  const nodeMajor = Number.parseInt(nodeVersion.split('.')[0], 10);
+  if (!Number.isInteger(nodeMajor) || nodeMajor < 24) {
     throw new ConfigError(
-      `V1 正式运行版本为 Node.js 24 LTS，当前为 v${nodeVersion}；请用 Node 24 启动 Runner`,
+      `运行 Runner 的最低 Node.js 版本为 24，当前为 v${nodeVersion}；请用 Node 24 或更高版本启动`,
     );
   }
 

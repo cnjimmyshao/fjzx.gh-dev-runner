@@ -6,7 +6,7 @@
 
 V1 最小闭环已按 [Issue #48](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/48) 在当前 main 上实现：Runner 是普通 Node.js 程序，带最小 `package.json`、零运行时依赖、`npm test`（`node --test`）与 `npm start`。实现位于 `src/`，测试位于 `test/`。
 
-本机验证状态见下面「验证分层与本次证据」。要点：Node **24.16.0** 下完整 `npm test` 通过；真实 `gh`、真实 `git` 与本机 `dsh` 的失败路径已实测；截至 2026-10-02，[Issue #66 的受控真实 E2E](research/2026-10-02-github-mbp01-coordinator-e2e.md) 又完成了一次真实 GitHub 控制评论、MBP01 Runner、原 DSH session、外部 dot Coordinator、一次 return-to、同 session RESUME 与正常 `run_end` 的闭环。该结果仍不覆盖仓库内 Coordinator / Safari 实现、真实 PR Review、多轮／多机或完整 Node 26 兼容。
+本机验证状态见下面「验证分层与本次证据」。要点：Node **24.16.0** 下完整 `npm test` 通过；真实 `gh`、真实 `git` 与本机 `dsh` 的失败路径已实测；截至 2026-10-02，[Issue #66 的受控真实 E2E](research/2026-10-02-github-mbp01-coordinator-e2e.md) 又完成了一次真实 GitHub 控制评论、MBP01 Runner、原 DSH session、外部 dot Coordinator、一次 return-to、同 session RESUME 与正常 `run_end` 的闭环。该结果仍不覆盖仓库内 Coordinator / Safari 实现、真实 PR Review 或多轮／多机；Node 24／26 的在册验证见下方 2026-10-02 Node 24／26 小结。
 
 接单工具采用 Node.js。首次代码 PR 已建立最小 `package.json`、锁文件与真正可运行的测试命令，没有铺空模块或假测试。工具自身的 Node.js 进程不是本地模型推理服务。
 
@@ -35,9 +35,9 @@ node src/index.js resolve-binding --repo owner/name --issue <n> --take-ownership
 
 实例锁只用 `wx` 独占创建：锁文件已存在就拒绝启动，不判断 stale、不自动删除、不自动接管。异常退出遗留锁属于低频维护事件，维护者确认没有 Runner 在运行后人工删除，再重新启动。Runner 与 `resolve-*` 都先取得实例锁、再加载 `state.json`。`npm run once` 执行 `node src/index.js --once`；`--once` 会等本轮领取的 Harness 结束后再退出（收到 `SIGINT` / `SIGTERM` 时只等最多 5 秒，之后退出并把在跑的 Harness 交给下次启动按恢复语义接管）。`--wait` 仅为兼容旧命令保留，不会改变运行或等待行为，也不需要与 `--once` 搭配。`resolve-run` / `resolve-session` / `resolve-binding` 都会写 `manual_resolution` 审计（动作、坐标、是否记录或清除 session），因此长期历史里能回查是谁何时释放了 unknown 槽位、确认了 session 或迁移了 Runner。`resolve-run --outcome running` 只在记录里已有可核对 `pid` 时成立：没有进程身份的 `running` 会在下次启动被恢复逻辑归一为 `unknown`，而 `unknown` 同样占槽，所以这种情况明确拒绝并保留 `unknown`（被拒绝的恢复不写盘、也不写审计）。`resolve-run --outcome exited` 表示维护者确认该运行已经结束：释放槽位后同时按 `CAPTURE` 收敛它的捕获（模型正文与 stderr 不长期保留，与正常结算、孤儿恢复同一实现）；`--outcome running` 表示该运行仍在写文件，不做收敛。`resolve-session --no-session` 表示维护者确认该任务没有可续接的 session（清除 `binding.sessionId` 与不明确标记），`resolve-binding --take-ownership` 表示维护者明确把绑定迁移到本机 Runner（目录 / 分支按本机配置重新派生、不续接原机器 session）。
 
-**当前实现**的测试与运行仍使用 Node 24（`engines.node = 24.x`，启动时校验；其他 Node 主版本会明确拒绝启动）。测试套件实际会跳过其他主版本下的 1 个 E2E 与 4 个入口用例，因此非 24 下的零失败不代表完整通过。最低 Node 24、允许 `>=24` 的规则修订见 [Current](current/README.md#node-运行范围) 与 [Issue #71](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/71)，随独立文档 PR 合并生效；此后的独立实现 PR 才修改 package／lock、启动校验和测试。规则生效与代码实现完成分开记录。
+**当前实现**的测试与运行要求 Node 24 或更高版本（`engines.node = >=24`，启动时校验；低于 24 的主版本会明确拒绝启动）。测试套件不再按 Node 主版本跳过入口／E2E 用例，Node 24 与 26 下都会执行完整套件。最低 Node 24、允许 `>=24` 的规则修订见 [Current](current/README.md#node-运行范围) 与 [Issue #71](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/71)。规则生效、代码实现与兼容验收分别记录，具体见下方 Node 24／26 验证小结与 [Research](research/2026-10-02-node24-26-implementation-verification.md)。
 
-`--env <path>` 可指定 `.env` 之外的部署配置；同名进程环境变量覆盖文件取值（只认 [配置模块](../src/config.js) 列出的键）。`HARNESS_ENV_ALLOWLIST` 只允许非 GitHub 变量：`GH_TOKEN` / `GITHUB_TOKEN` 等保留变量会被直接拒绝，Runner 不向 Harness 转发 GitHub 凭据。`DSH_BIN` 可以是不含分隔符的命令名（按 `PATH` 解析），`.js` 入口由 Runner 自己的 Node 24 进程启动。启动前校验 Node 24、`DSH_BIN`、各仓库 `sourceDir`、`worktreeDir` 与 `gh auth status`，任一项不成立即拒绝启动；`.env.example` 与实现一致。
+`--env <path>` 可指定 `.env` 之外的部署配置；同名进程环境变量覆盖文件取值（只认 [配置模块](../src/config.js) 列出的键）。`HARNESS_ENV_ALLOWLIST` 只允许非 GitHub 变量：`GH_TOKEN` / `GITHUB_TOKEN` 等保留变量会被直接拒绝，Runner 不向 Harness 转发 GitHub 凭据。`DSH_BIN` 可以是不含分隔符的命令名（按 `PATH` 解析），`.js` 入口由 Runner 自己的 Node 进程启动。启动前校验 Node 最低版本 24、`DSH_BIN`、各仓库 `sourceDir`、`worktreeDir` 与 `gh auth status`，任一项不成立即拒绝启动；`.env.example` 与实现一致。
 
 `GIT_BIN` 的作用域只有 Runner 自己准备／校验任务 worktree 时执行的 `git`：配置值被传给 `workdir` 模块，但不会改写 Harness 子进程的 `PATH`，也不会替 Harness / Dev 选择 `git` 或 `gh`。Harness 继承 Runner 启动环境里的最小系统变量，其中包括 `PATH`；Dev 在 Harness 内调用的 `git` / `gh` 仍按该 `PATH` 解析。因此，若 `GIT_BIN` 指向可用 Git、但 Runner 服务进程的 `PATH` 仍先命中错误架构或不可用的 Git，worktree 操作可以成功而 Dev 内的 Git 仍会失败。部署时须分别核对 Runner 的 `GIT_BIN` 与同一服务启动环境的 `PATH`；设置前者不能代替修正后者。
 
@@ -62,7 +62,17 @@ node src/index.js resolve-binding --repo owner/name --issue <n> --take-ownership
 1. Harness 内发布的 GitHub 结果评论证明该轮已经执行到回报动作，但评论发生时子进程可能仍未退出；Issue #66 的最终报告就明确写着当时尚无本轮 `run_end`。
 2. 评论发布后继续核对同一 `runId` 的 `run_end`，只有其 exit code、outcome、`turnEnd`、`timedOut` 与结束时间均符合预期，才算本轮技术调用正常收尾。`runner_stopped` 只表示 Runner 进程后来停止，职责不同：专项一次性测试可以核对它是否按计划退出，常驻 Runner 无需也不应为了每轮验收而停止。
 
-本次只证明单机、单 Issue、一次受控 Coordinator 往返。外部 dot Coordinator 的成功不表示仓库内 Coordinator / Safari 接入已经实现；没有覆盖真实 PR Review / 修复、多轮或无限往返、多机路由／并发，也不把这次运行外推为完整 Node 26 兼容。
+本次只证明单机、单 Issue、一次受控 Coordinator 往返。外部 dot Coordinator 的成功不表示仓库内 Coordinator / Safari 接入已经实现；没有覆盖真实 PR Review / 修复、多轮或无限往返、多机路由／并发；也不把这次运行外推为其他 Node 主版本的兼容证明（Node 24／26 的单独验证见下节）。
+
+### 2026-10-02：Node 24／26 实现与兼容验证
+
+[带日期的 Research 报告](research/2026-10-02-node24-26-implementation-verification.md)记录了 Issue #71 的实现结果与验证范围。要点：
+
+- `package.json` 与 `package-lock.json` 的 `engines.node` 改为 `>=24`；`src/config.js` 的启动校验拒绝低于 24 的主版本，不再因主版本高于 24 拒绝启动；测试不再按 Node 主版本跳过。
+- 在同一源码副本分别以 Node **24.16.0** 与 **26.8.1** 执行完整 `npm test`（`node --test`，117 个用例）：两版本均为 117 pass、0 fail、0 skipped。
+- 真实 CLI 入口在 Node 24／26 下都通过版本校验（随后按配置缺失正常拒绝），确认放行不是只靠注入测试。
+- 在隔离 `DSH_HOME`、隔离工作目录、不消费真实 GitHub 控制任务的条件下，分别用 Node 24 与 Node 26 启动当前 Harness（`@deepseek-ai/dsh` 0.2.0-rc.2，headless profile）执行 START 与同 session RESUME：两版本 START／RESUME 均 exit 0，JSONL 均以 `session` 开头、以 `final` 结束，RESUME 的 `sessionId` 与 `cwd` 与 START 一致，且模型在第二轮复述了第一轮要求记住的数字，证明是同一持久化会话续接。
+- 未覆盖：低于 24 的真实运行时拒绝只用注入 `nodeVersion` 的单元测试覆盖（本机未安装 <24 的 Node，也不做安装／切换）；真实 Harness 验证只覆盖单机、此版本与 headless profile；其他 Node 主版本、其他平台或多机未验证。
 
 ### 2026-09-30：首次实现验证快照（历史）
 
@@ -86,7 +96,7 @@ node src/index.js resolve-binding --repo owner/name --issue <n> --take-ownership
 
 ## V1 运行与分发口径
 
-V1 直接以标准 Node.js 程序运行，不把 Runner 打包成单文件可执行程序。首次实现按 #43／#44 以 **Node.js 24 LTS** 为运行线，`engines.node` 与启动校验目前仍约束为 24.x。#71 的文档修订随其独立文档 PR 合并生效，以 Node 24 为最低门槛、允许 `>=24` 并推荐受支持 LTS；具体目标与生效条件以 [Current](current/README.md#node-运行范围) 为准，当前代码与后续实现进度见 #71，实际已验证版本以带日期的 [Research](research/2026-10-02-node-runtime-range.md) 为准，不混同这些状态。Node.js 作为明确的本机运行时依赖；Runner 自身通过 `package.json`、依赖锁文件和正常的启动／测试命令交付。Git、已登录的 GitHub CLI（`gh`）与 Harness CLI 仍按各自方式在本机准备，不嵌入 Runner，也不因分发方便新增凭据封装。
+V1 直接以标准 Node.js 程序运行，不把 Runner 打包成单文件可执行程序。首次实现按 #43／#44 以 **Node.js 24 LTS** 为运行线；#71 的实现已把 `engines.node` 与启动校验改为最低 Node 24、允许 `>=24`，并推荐正式部署使用受官方支持的 LTS 发布线。具体目标与生效条件以 [Current](current/README.md#node-运行范围) 为准，实际已验证版本以带日期的 [Node 运行时范围核验](research/2026-10-02-node-runtime-range.md) 与 [Node 24／26 实现与兼容验证](research/2026-10-02-node24-26-implementation-verification.md) 为准，不混同规则生效、代码实现与兼容验收三种状态。Node.js 作为明确的本机运行时依赖；Runner 自身通过 `package.json`、依赖锁文件和正常的启动／测试命令交付。Git、已登录的 GitHub CLI（`gh`）与 Harness CLI 仍按各自方式在本机准备，不嵌入 Runner，也不因分发方便新增凭据封装。
 
 当前不建设 Windows EXE、macOS／Linux 单文件二进制、安装器、自动更新器或 Node SEA／pkg／nexe 等打包链路。以后若多台执行电脑的实际部署成本证明单文件分发有价值，再单独开 Issue 评估支持平台、发布方式和升级策略；该未来选择不作为当前 Runner 功能开发的前置条件，也不要求现在为打包预留额外抽象。
 
@@ -96,9 +106,9 @@ V1 直接以标准 Node.js 程序运行，不把 Runner 打包成单文件可执
 
 已在本机执行电脑上按 Issue #7 完成一次性接入验证，证据见 [CLI 验证报告](research/2026-09-23-local-harness-cli-first-run-and-resume.md)。结论要点：
 
-- **历史验证环境**实测版本为 Node v26.7.0、`@deepseek-ai/dsh` 0.1.5-rc.2；该 Node 版本只记录当时 Research 环境，不代表 Runner 的 V1 正式运行版本，V1 Contract 仍为 Node.js 24 LTS。**该版本的 headless CLI 只有 `[task...]` 与 `--help`**，没有上游更高版本（`0.1.6-alpha.1` 起）的 `--session-id`／`--json`，因此不能直接按上游文档调用；同目录再次调用只会新建会话。
+- **历史验证环境**实测版本为 Node v26.7.0、`@deepseek-ai/dsh` 0.1.5-rc.2；该 Node 版本只记录当时 Research 环境，不代表当时的最低运行线（现行运行范围见 [Current](current/README.md#node-运行范围)：最低 Node 24、允许 `>=24`）。**该版本的 headless CLI 只有 `[task...]` 与 `--help`**，没有上游更高版本（`0.1.6-alpha.1` 起）的 `--session-id`／`--json`，因此不能直接按上游文档调用；同目录再次调用只会新建会话。
 - 首轮执行、退出后续接、结构化结果与失败信号已由 [`scripts/headless-session/`](../scripts/headless-session/README.md) 在本机实测通过：它用 profile patch 把本地 runner 挂到随附的 headless profile 上，命令仍是「启动器 + headless profile」，未升级、未新增服务或端口。
-- **这些结果只对 Node v26.7.0 的验证环境成立，V1 正式运行版本 Node.js 24 LTS 下尚未重跑。** 上述首轮执行、续接、结构化结果与失败信号都取自 v26，不能据此认定同一 `dsh` 与 profile patch 在 Node 24 下可用。开始实现依赖 Harness CLI 的接单链路之前，须在 Node.js 24（24.x）上重跑这几项并如实记录通过／失败／未覆盖范围；在完成并记录之前，本机 CLI 接入不算已在 V1 运行版本上验证，也不得据此认为关键运行时前置验证已完成。
+- **这些结果只对 Node v26.7.0 的验证环境成立，最低运行线 Node 24 下尚未重跑。** 上述首轮执行、续接、结构化结果与失败信号都取自 v26，不能据此认定同一 `dsh` 与 profile patch 在 Node 24 下可用。开始实现依赖 Harness CLI 的接单链路之前，须在 Node.js 24 上重跑这几项并如实记录通过／失败／未覆盖范围；在完成并记录之前，本机 CLI 接入不算已在最低运行线上验证，也不得据此认为关键运行时前置验证已完成。
 - 仍待执行的验证有两项：上面这项 Node.js 24 LTS 重跑，以及维护者日后授权升级 Harness 后按新版本重新实测官方 `--session-id`／`--json` 并复核 overlay 行 id。未授权前不升级工作中的 Harness，也不改用其他界面。
 - 本节记录的是 0.1.5-rc.2 overlay 路线的历史结论。产品路径已由 [Issue #48](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/48) 改为官方 headless profile；官方路径在 Node 24 上的并发／续接行为由 [共享 DSH_HOME 并发实测](research/2026-09-29-shared-dsh-home-concurrency.md) 记录，其失败路径在 2026-09-30 又以隔离 `DSH_HOME` 复核（见上表）。overlay 路线的 Node 24 重跑不再是接单链路的前置条件。
 

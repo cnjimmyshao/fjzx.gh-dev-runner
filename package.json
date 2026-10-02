@@ -5,7 +5,7 @@
   "description": "GitHub Issue 接单与 DeepSeek Harness headless 会话续接工具（V1）",
   "type": "module",
   "engines": {
-    "node": "24.x"
+    "node": ">=24"
   },
   "scripts": {
     "start": "node src/index.js",
