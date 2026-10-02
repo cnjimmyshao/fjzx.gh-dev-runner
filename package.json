@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node src/index.js",
     "once": "node src/index.js --once",
+    "help": "node src/index.js --help",
     "test": "node --test"
   },
   "license": "UNLICENSED"

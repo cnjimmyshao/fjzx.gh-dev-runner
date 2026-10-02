@@ -22,16 +22,18 @@ V1 最小闭环已按 [Issue #48](https://github.com/cnjimmyshao/fjzx.gh-dev-run
 ```
 
 ```bash
+npm run help                                  # 显示帮助；等价于 npm start -- --help
 npm start                                    # 常驻轮询（runtime.pollSeconds）
-node src/index.js --once                     # 只跑一个 polling cycle
-node src/index.js --once --wait              # 跑一个 cycle 并等本次启动的 Harness 结束
+npm run once                                 # 跑一个 cycle 并等本轮启动的 Harness 结束
 node src/index.js resolve-run --run <runId> --outcome exited|running [--session <id>]
 node src/index.js resolve-session --repo owner/name --issue <n> --session <id>
 node src/index.js resolve-session --repo owner/name --issue <n> --no-session
 node src/index.js resolve-binding --repo owner/name --issue <n> --take-ownership
 ```
 
-实例锁只用 `wx` 独占创建：锁文件已存在就拒绝启动，不判断 stale、不自动删除、不自动接管。异常退出遗留锁属于低频维护事件，维护者确认没有 Runner 在运行后人工删除，再重新启动。Runner 与 `resolve-*` 都先取得实例锁、再加载 `state.json`。`--once` 会等本轮领取的 Harness 结束后再退出（收到 `SIGINT` / `SIGTERM` 时只等最多 5 秒，之后退出并把在跑的 Harness 交给下次启动按恢复语义接管）。`resolve-run` / `resolve-session` / `resolve-binding` 都会写 `manual_resolution` 审计（动作、坐标、是否记录或清除 session），因此长期历史里能回查是谁何时释放了 unknown 槽位、确认了 session 或迁移了 Runner。`resolve-run --outcome running` 只在记录里已有可核对 `pid` 时成立：没有进程身份的 `running` 会在下次启动被恢复逻辑归一为 `unknown`，而 `unknown` 同样占槽，所以这种情况明确拒绝并保留 `unknown`（被拒绝的恢复不写盘、也不写审计）。`resolve-run --outcome exited` 表示维护者确认该运行已经结束：释放槽位后同时按 `CAPTURE` 收敛它的捕获（模型正文与 stderr 不长期保留，与正常结算、孤儿恢复同一实现）；`--outcome running` 表示该运行仍在写文件，不做收敛。`resolve-session --no-session` 表示维护者确认该任务没有可续接的 session（清除 `binding.sessionId` 与不明确标记），`resolve-binding --take-ownership` 表示维护者明确把绑定迁移到本机 Runner（目录 / 分支按本机配置重新派生、不续接原机器 session）。
+其他 CLI 参数通过 npm 的 `--` 透传，例如 `npm run once -- --env <path>`；`npm test`／`npm run test` 运行 Node 测试框架，不是 `index.js` 的子命令。
+
+实例锁只用 `wx` 独占创建：锁文件已存在就拒绝启动，不判断 stale、不自动删除、不自动接管。异常退出遗留锁属于低频维护事件，维护者确认没有 Runner 在运行后人工删除，再重新启动。Runner 与 `resolve-*` 都先取得实例锁、再加载 `state.json`。`npm run once` 执行 `node src/index.js --once`；`--once` 会等本轮领取的 Harness 结束后再退出（收到 `SIGINT` / `SIGTERM` 时只等最多 5 秒，之后退出并把在跑的 Harness 交给下次启动按恢复语义接管）。`--wait` 仅为兼容旧命令保留，不会改变运行或等待行为，也不需要与 `--once` 搭配。`resolve-run` / `resolve-session` / `resolve-binding` 都会写 `manual_resolution` 审计（动作、坐标、是否记录或清除 session），因此长期历史里能回查是谁何时释放了 unknown 槽位、确认了 session 或迁移了 Runner。`resolve-run --outcome running` 只在记录里已有可核对 `pid` 时成立：没有进程身份的 `running` 会在下次启动被恢复逻辑归一为 `unknown`，而 `unknown` 同样占槽，所以这种情况明确拒绝并保留 `unknown`（被拒绝的恢复不写盘、也不写审计）。`resolve-run --outcome exited` 表示维护者确认该运行已经结束：释放槽位后同时按 `CAPTURE` 收敛它的捕获（模型正文与 stderr 不长期保留，与正常结算、孤儿恢复同一实现）；`--outcome running` 表示该运行仍在写文件，不做收敛。`resolve-session --no-session` 表示维护者确认该任务没有可续接的 session（清除 `binding.sessionId` 与不明确标记），`resolve-binding --take-ownership` 表示维护者明确把绑定迁移到本机 Runner（目录 / 分支按本机配置重新派生、不续接原机器 session）。
 
 测试与运行都要求在 Node 24 下执行（`engines.node = 24.x`，启动时校验；其他 Node 主版本会明确拒绝启动，测试套件中的端到端用例也会因此失败而不是静默跳过）。
 
