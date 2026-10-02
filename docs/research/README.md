@@ -12,7 +12,7 @@
 
 报告：
 
-- [Node 运行时范围核验](2026-10-02-node-runtime-range.md)：main `60113e7` 在 Node 24.16.0 下 113/113 通过；Node 26.8.1 下 108 通过、5 个入口／E2E 用例因现有版本门槛跳过。`>=24` 是 #71 的候选规则，不是完整兼容证明。
+- [Node 运行时范围核验](2026-10-02-node-runtime-range.md)：main `60113e7` 在 Node 24.16.0 下 113/113 通过；Node 26.8.1 下 108 通过、5 个入口／E2E 用例因当时版本门槛跳过。最低版本规则与实际兼容验收分开，规则生效状态见 [Current](../current/README.md#node-运行范围)。
 - [本机 Harness CLI 首轮执行与同会话续接验证](2026-09-23-local-harness-cli-first-run-and-resume.md)：本机 0.1.5-rc.2 的 headless 单轮执行可用，但该版本自身无 `--session-id` / `--json`；用 profile patch 挂本地 runner 后已实测跨进程续接，脚本在 `scripts/headless-session/`。
 - [START 阶段 sessionId 的创建与可见时点实测](2026-09-24-start-sessionid-visibility.md)：会话在进程启动后约 1.5–1.7s（热 profile）创建；本地 runner 只在整轮结束的最终结果里交付 `sessionId`，官方 headless 在本机 0.1.5-rc.2 完全不给，两者之间存在真实的「已创建但调用方不可见」窗口。
 - [共享 DSH_HOME 的多 Harness 并发与单 session 单写入实测](2026-09-29-shared-dsh-home-concurrency.md)：本机安装已是 `@deepseek-ai/dsh` 0.2.0-rc.2（Node v24.16.0，macOS）；同一 `DSH_HOME` 下 2／4 个进程的不同 session 与不同（或相同）工作目录可并发，冷 home 首次初始化 2／6 进程竞争也通过；同一 session 的第二写入者被 Harness 自身的内核写锁明确拒绝（退出 1、结构化错误、被拒进程 0 事件），强杀不留悬挂锁且后继进程可继续 resume，12 个会话日志全部可完整解码——所测范围内不需要按任务／进程隔离 home。
