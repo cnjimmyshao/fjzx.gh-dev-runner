@@ -26,9 +26,15 @@ DeepSeek 模型 API Key 在本机配置并保存，由 Harness 用于模型调�
 
 ```bash
 cp .env.example .env     # 填写 RUNNER_NAME / REPOSITORIES_JSON / STATE_DIR / DSH_BIN 等
-npm start                # 常驻轮询；node src/index.js --once 只跑一轮
+npm run help             # 显示帮助；等价于 npm start -- --help
+npm start                # 常驻轮询
+npm run once             # 只跑一轮，并等本轮启动的 Harness 结束
 npm test                 # Node 24 下运行全部测试
 ```
+
+`npm run once` 执行 `node src/index.js --once`。`--wait` 仅为兼容旧命令保留，不会改变运行或等待行为，也不需要与 `--once` 搭配。
+
+其他 CLI 参数通过 npm 的 `--` 透传，例如 `npm run once -- --env <path>`。`npm test`／`npm run test` 运行 Node 测试框架，不是 `index.js` 的子命令。
 
 Runner 直接以 Node.js 24 运行，没有运行时依赖与安装脚本，也不打包成单文件可执行程序；`scripts/headless-session/` 是 0.1.5-rc.2 时期的一次性验证脚本，不是 Runner 的运行路径。外部 Review 集成是否已启用需另行核验，不能据此声称环境已就绪。
 

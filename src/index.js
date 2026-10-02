@@ -4,8 +4,8 @@
  *
  * 常用：
  *   node src/index.js                 # 常驻轮询（runtime.pollSeconds）
- *   node src/index.js --once          # 只跑一个 polling cycle
- *   node src/index.js --once --wait   # 跑一个 cycle，并等本次启动的 Harness 结束
+ *   node src/index.js --once          # 只跑一个 polling cycle，并等本轮启动的 Harness 结束
+ *   node src/index.js --wait          # 兼容旧命令；不改变运行或等待行为
  *
  * 人工恢复（需要 Runner 未在运行）：
  *   node src/index.js resolve-run --run <runId> --outcome exited [--session <id>]
@@ -36,6 +36,12 @@ const USAGE = `用法:
   node src/index.js resolve-run --run <runId> --outcome exited|running [--session <id>]
   node src/index.js resolve-session --repo <owner/name> --issue <n> (--session <id> | --no-session)
   node src/index.js resolve-binding --repo <owner/name> --issue <n> --take-ownership
+
+选项:
+  --env <path>  使用指定的部署配置文件
+  --once       只运行一个 polling cycle，并等待本轮启动的 Harness 结束
+  --wait       兼容旧命令保留；不改变运行或等待行为
+  --help, -h   显示本帮助
 
 resolve-session --no-session 表示确认该任务没有可续接的 session：清除 binding.sessionId 与
 不明确标记，下一次有效控制评论按 START 新建会话。

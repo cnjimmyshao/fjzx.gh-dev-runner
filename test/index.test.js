@@ -65,6 +65,28 @@ test('parseArgs 解析命令与选项，并在缺值时明确报错', () => {
   assert.throws(() => parseArgs(['--unknown']), ConfigError);
 });
 
+test('--help 无需部署配置即可显示 once 与 wait 的准确语义', async () => {
+  assert.equal(parseArgs(['--help']).help, true);
+  assert.equal(parseArgs(['-h']).help, true);
+
+  const stdout = silentStdout();
+  let authChecked = false;
+  const code = await main(['--help'], {
+    stdout,
+    github: {
+      authStatus: async () => {
+        authChecked = true;
+        throw new Error('帮助入口不应访问 GitHub');
+      },
+    },
+  });
+
+  assert.equal(code, 0);
+  assert.match(stdout.text(), /--once\s+只运行一个 polling cycle，并等待本轮启动的 Harness 结束/);
+  assert.match(stdout.text(), /--wait\s+兼容旧命令保留；不改变运行或等待行为/);
+  assert.equal(authChecked, false);
+});
+
 test('resolve-session 记录人工核对的 sessionId 或确认无遗留会话', async () => {
   const root = tempDir('fjzx-index-');
   try {
