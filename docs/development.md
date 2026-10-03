@@ -55,11 +55,12 @@ node src/index.js resolve-binding --repo owner/name --issue <n> --take-ownership
 
 ### 2026-10-03：Scope 与 Review 唤醒提醒
 
-[Issue #83](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/83) 的 Implementation 依据已合并的 [唤醒协议](current/02-dev-invocation-protocol.md#scope-与-review-处理提醒)，将四句提醒加入 START / RESUME 的共享消息，并同步 `prompts.example.json`。本轮在独立工作树、macOS / arm64 下验证：
+[Issue #83](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/83) 的 Implementation 依据已合并的 [唤醒协议](current/02-dev-invocation-protocol.md#scope-与-review-处理提醒)，将四项提醒加入 START / RESUME 的共享消息，并同步 `prompts.example.json`。措辞明确普通 Finding 不扩大授权或解除冻结、真实回归仍须处理且允许移除非必要新增实现、待决修改暂停但正常完成仍可退出；RESUME 按目标规则对照最新已合并版本，读取生效规则而不沿用旧分支或 session 的过时认识。本轮在独立工作树、macOS / arm64 下验证：
 
-- Node **24.16.0**：`node --test` 完整套件 **122 pass / 0 fail / 0 skipped**。
+- Node **24.16.0**：`node --test --test-concurrency=1` 完整套件 **122 pass / 0 fail / 0 skipped**。
 - Node **26.8.1**：`node --test test/prompt.test.js test/harness.test.js` 相关套件 **21 pass / 0 fail / 0 skipped**；本轮未重跑 Node 26 的完整套件。
-- Current 文案一致性检查在旧 prompt 上失败，添加提醒后通过；隔离 Harness 子进程完整接收两种模式生成的中文任务消息，续接使用原 session / 目录。该 Harness 是替身，不调用模型、不写真实 GitHub 或业务数据；这证明消息生成和传递，不证明真实 Implementer 已按提醒分类 Finding 或收口。
+- 提醒与生效规则检查在补强前的 prompt 上失败，落实后通过；检查目标是 Current 的语义要求，不锁定其中“可采用”的示例措辞。代码与样例的共享核心及两种模式文案均保持同步；隔离 Harness 子进程完整接收两种模式生成的中文任务消息，续接使用原 session / 目录。该 Harness 是替身，不调用模型、不写真实 GitHub 或业务数据；这证明消息生成和传递，不证明真实 Implementer 已按提醒分类 Finding 或收口。
+- 最终措辞回归时，默认并行套件及随后单独端到端测试各出现一次 `lastTrigger` 为 null；串行完整复测通过。端到端 fixture 在 baseline 前预设评论时间为当时加一秒，而 Runner 按 baseline 完成时间扫描，这存在初始化较慢时错过模拟评论的时间窗口；该次失败发生在领取任务前，尚未构建或发送 prompt。
 
 运行侧需加载包含该 Implementation 的 Runner 版本，后续 START / RESUME 才会使用新消息；仅编辑示例或源文件不会更新已启动 Runner 的模块内容，正在运行的 Harness 也不会动态收到新 prompt。本轮未合并 / 部署 Implementation、重启正式 Runner、干预已有 Harness 或触发真实业务任务；运行采用与行为验证应另按实际授权和证据记录。
 
