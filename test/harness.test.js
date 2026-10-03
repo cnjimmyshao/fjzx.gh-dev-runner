@@ -12,6 +12,7 @@ import {
   createLineReader,
   harnessInvocation,
 } from '../src/harness.js';
+import { buildTaskMessage } from '../src/prompt.js';
 import { cleanup, makeConfig, tempDir } from './helpers.js';
 
 const silent = { info: () => {}, warn: () => {}, error: () => {} };
@@ -135,7 +136,7 @@ test('harnessInvocation 对 .js 入口用当前 Node 运行，并区分 START / 
   }
 });
 
-test('START 成功：早期取得 sessionId、早期判据成立、任务通过 stdin 送达', async () => {
+test('START / RESUME 成功：生成的任务经 stdin 完整送达，续接保留 session 与目录', async () => {
   const { dir, config } = makeHarnessConfig();
   try {
     const fake = writeFakeHarness(dir, 'ok');
@@ -143,12 +144,20 @@ test('START 成功：早期取得 sessionId、早期判据成立、任务通过 
     const runner = createHarnessRunner({ config, logger: silent });
     const workdir = path.join(dir, 'work');
     fs.mkdirSync(workdir);
+    const coordinates = {
+      repository: 'owner/repo',
+      issueNumber: 83,
+      sourceType: 'comment',
+      sourceId: '12345',
+      requester: 'alice',
+    };
+    const startTask = buildTaskMessage({ ...coordinates, kind: 'start' });
     const handle = runner.launch({
       runId: 'run-1',
       kind: 'start',
       dir: workdir,
       sessionId: null,
-      task: 'TASK-BODY-VIA-STDIN\n',
+      task: startTask,
     });
 
     assert.equal(await handle.sessionId, 'session-fake');
@@ -159,7 +168,7 @@ test('START 成功：早期取得 sessionId、早期判据成立、任务通过 
     assert.equal(result.hadAssistantCommit, true);
     assert.equal(result.invalidLines, 1, '半截/坏行不会中断解析');
     assert.deepEqual(classifyHarnessResult(result), { ok: true, category: null });
-    assert.equal(fs.readFileSync(fake.taskFile, 'utf8'), 'TASK-BODY-VIA-STDIN\n');
+    assert.equal(fs.readFileSync(fake.taskFile, 'utf8'), startTask);
 
     // capture=metadata：只保留技术事件，模型正文不长期落盘
     runner.finalizeCapture(handle.record === null ? '' : path.join(config.runtime.stateDir, 'runs', 'run-1'));
@@ -172,6 +181,26 @@ test('START 成功：早期取得 sessionId、早期判据成立、任务通过 
       false,
       'metadata 模式不长期保留 stderr 捕获',
     );
+
+    const resumeTask = buildTaskMessage({ ...coordinates, kind: 'resume', sourceId: '12346' });
+    const resumed = runner.launch({
+      runId: 'run-1-resume',
+      kind: 'resume',
+      dir: workdir,
+      sessionId: await handle.sessionId,
+      task: resumeTask,
+    });
+    assert.equal(await resumed.sessionId, await handle.sessionId);
+    assert.equal(await resumed.earlySignal, true);
+    const resumedResult = await resumed.exited;
+    assert.deepEqual(classifyHarnessResult(resumedResult), { ok: true, category: null });
+    assert.equal(fs.readFileSync(fake.taskFile, 'utf8'), resumeTask);
+    const resumedCapture = fs.readFileSync(path.join(config.runtime.stateDir, 'runs', 'run-1-resume', 'stdout.jsonl'), 'utf8');
+    const sessionEvent = resumedCapture.trim().split('\n').map((line) => {
+      try { return JSON.parse(line); } catch { return null; }
+    }).find((event) => event?.type === 'session');
+    assert.ok(sessionEvent, '续接返回 session 事件');
+    assert.equal(fs.realpathSync(sessionEvent.cwd), fs.realpathSync(workdir), '子进程继续使用原任务目录');
   } finally {
     cleanup(dir);
   }
