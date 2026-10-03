@@ -51,3 +51,15 @@ test('prompts.example.json 的 shared 与 Runner 共享核心保持同步', () =
   assert.deepEqual(example.shared, shared);
   assert.ok(example.shared.some((line) => line.includes('Actor: implementer')));
 });
+
+test('START 与 RESUME 的 Scope 与 Review 提醒符合已合并 Current', () => {
+  const current = fs.readFileSync(new URL('../docs/current/02-dev-invocation-protocol.md', import.meta.url), 'utf8');
+  const approvedText = current.match(/### Scope 与 Review 处理提醒[\s\S]*?```text\n([\s\S]*?)\n```/);
+  assert.ok(approvedText, 'Current 提供共享提醒文案');
+  const reminders = approvedText[1].split('\n');
+
+  for (const kind of ['start', 'resume']) {
+    const shared = sharedBlock(buildTaskMessage({ ...base, kind }));
+    assert.deepEqual(shared.slice(-reminders.length), reminders, `${kind} 完整发送已确认的共享提醒`);
+  }
+});
