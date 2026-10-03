@@ -24,9 +24,32 @@ Runner 必须区分两类唤醒：
 3. 分析、编码、测试、提交 PR、处理 Review 与提出待决问题由 Dev 按目标项目规则完成；
 4. 需要 Maintainer 决定或授权的事项回到关联 Issue；
 5. 本消息只负责指向任务，不是需求正文；
-6. 本轮 Dev 的 Logical Actor 是 `implementer`；Dev 自己发布 GitHub 业务评论时按 [Logical Actor Identity](07-logical-actor-identity.md) 标记 `Actor: implementer`，且不得破坏 `@COORDINATOR` / `@<runnerName>` 必须位于控制评论末尾的规则。
+6. 本轮 Dev 的 Logical Actor 是 `implementer`；Dev 自己发布 GitHub 业务评论时按 [Logical Actor Identity](07-logical-actor-identity.md) 标记 `Actor: implementer`，且不得破坏 `@COORDINATOR` / `@<runnerName>` 必须位于控制评论末尾的规则；
+7. START 与 RESUME 都提醒 Dev 依据目标项目规则执行范围核对、Finding 判断、重复修复复盘和验收收口，不把 Review 评论或级别标签直接升级为新的 Requirement。
 
 共享核心应保持短小，不复制整套 AGENTS，也不维护第二份项目工作方法。
+
+### Scope 与 Review 处理提醒
+
+本节由 [Issue #81](https://github.com/cnjimmyshao/fjzx.gh-dev-runner/issues/81) 跟进，随独立 documentation-only PR Review / Merge 后成为实现依据；消息代码与样例通过后续独立 Implementation Issue / PR 落实。它将 [AGENTS](../../AGENTS.md) 已有的范围、Review、修复与交接原则转成唤醒提醒，目标项目 AGENTS、Current 与 Issue 最新决定仍负责具体要求和授权。
+
+共享消息中的提醒覆盖以下动作：
+
+1. **修改前核对边界。** Dev 实际读取依据后，核对本次 Scope、非目标、Acceptance 及最新暂停 / 冻结决定；普通 Finding 不解除 Scope Freeze，也不扩大既有授权。
+2. **每批 Finding 先判断。** Dev 核实运行前提、违反的已确认要求与具体后果，并简短说明修复、证据回应、Follow-up 或待决事项的依据。已授权范围内的明确缺陷仍由 Implementer 自主处理；额外增强记录 Follow-up；现有依据无法决定的 Scope / Contract / 保障范围改变，按目标项目规则交接。判断可沿用 PR 线程或 Issue 现有记录，不要求固定表格、重复完整日志或逐条人工审批。
+3. **重复修复时复盘。** 同根因反复出现、补丁持续增加例外或修复将扩大 Scope 时，先审视根因和责任边界；需要协调 / 更高权限决定的问题在原 Issue 交接。不受影响的工作继续；只有待决事项阻塞全部剩余工作时，才结束本轮调用并保留原任务、分支、PR 与 session。普通任务完成仍按既有调用语义退出。
+4. **按验收证据收口。** Dev 按已确认 Acceptance 与当前 head 的实际证据判断交付，分别报告实现、Review 和验收状态；不能把所有 Review 评论消失或所有 P1/P2/P3 清零作为无范围限定的完成条件。真实正确性、安全性问题、已承诺场景的缺陷及本 PR 新增代码引入的真实回归仍须处理，不能仅因位于外围工具就称为 Follow-up；必要时可在既有授权内移除不必要的新增实现。
+
+可采用以下简短措辞，具体任务事实仍由 Dev 自行读取，不由 Runner 填写：
+
+```text
+开始或恢复修改前，依据目标项目规则和 Issue 最新决定核对本次 Scope、非目标、Acceptance 及暂停／冻结要求；先确认边界再修改。
+处理每批 Review Finding 前，先核实前提、违反的已确认要求与具体后果，并简短记录修复、证据回应、Follow-up 或待决事项的判断依据；不按 P1/P2/P3 标签机械增加代码。
+同根因反复出现、补丁持续增加例外或修复将扩大 Scope 时，先复盘责任边界，按目标项目规则在原 Issue 交接需要协调／决定的问题；继续不受影响的工作，只有待决事项阻塞全部剩余工作时才结束本轮调用并保留已有任务。
+按已确认 Acceptance 与当前 head 的实际证据判断交付，区分实现、Review 和验收状态；不以所有 Review 评论消失或 P1/P2/P3 清零作为无范围限定的完成条件，不忽略真实缺陷或既有承诺。
+```
+
+这些文字提醒 Dev 执行目标项目规则，不要求 Runner 读取并裁决 Finding、不规定固定 Review 轮数，也不把 Coordinator 或 Maintainer 审批加入每个普通修复步骤。若目标项目对交接方式或暂停 / 冻结另有明确决定，Dev 遵循该决定；只有剩余工作确实依赖用户或维护者时才交接等待。
 
 ## START
 
@@ -119,5 +142,6 @@ sessionId 不属于 Dev 消息必须重复描述的业务上下文。Runner 在 
 - START 与 RESUME 的语义确实不同；
 - 两种消息都包含正确任务坐标与共享核心；
 - RESUME 会要求刷新 Issue / PR / Review / 当前 head，并明确不要重复开工；
+- 两种消息都包含上述 Scope 与 Review 提醒，且不覆盖目标项目规则、暂停 / 冻结决定或授权；
 - 消息不会把 Issue / Review 正文、本机路径或凭证带入 Harness；
 - 修改消息模板不改变 Runner 与 Dev 的既有职责边界。
